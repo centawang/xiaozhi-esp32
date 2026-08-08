@@ -571,8 +571,13 @@ def _build_option_definitions(
         })
 
     camera_enable_symbol = _OPTIONAL_CAMERA_ENABLE_SYMBOLS.get(board_config)
+    # Boards may also subclass the common camera to add board-specific behavior.
+    uses_common_camera = re.search(
+        r"\bnew\s+(?:Esp32Camera|EspVideo)\b|\bpublic\s+(?:Esp32Camera|EspVideo)\b",
+        source,
+    )
     has_common_camera = (
-        ("new Esp32Camera" in source or "new EspVideo" in source)
+        uses_common_camera is not None
         and (
             camera_enable_symbol is None
             or assignments.get(camera_enable_symbol) == "y"
