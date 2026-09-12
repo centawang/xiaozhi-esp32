@@ -36,7 +36,8 @@ void Protocol::OnAudioChannelOpened(std::function<void()> callback) {
     on_audio_channel_opened_ = callback;
 }
 
-void Protocol::OnAudioChannelClosed(std::function<void()> callback) {
+void Protocol::OnAudioChannelClosed(
+    std::function<void(const AudioChannelCloseInfo& info)> callback) {
     on_audio_channel_closed_ = callback;
 }
 
@@ -71,7 +72,7 @@ void Protocol::SendWakeWordDetected(const std::string& wake_word) {
     SendText(json);
 }
 
-void Protocol::SendStartListening(ListeningMode mode) {
+bool Protocol::SendStartListening(ListeningMode mode) {
     std::string message = "{\"session_id\":\"" + session_id_ + "\"";
     message += ",\"type\":\"listen\",\"state\":\"start\"";
     if (mode == kListeningModeRealtime) {
@@ -82,7 +83,7 @@ void Protocol::SendStartListening(ListeningMode mode) {
         message += ",\"mode\":\"manual\"";
     }
     message += "}";
-    SendText(message);
+    return SendText(message);
 }
 
 void Protocol::SendStopListening() {

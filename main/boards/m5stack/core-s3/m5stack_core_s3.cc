@@ -7,13 +7,22 @@
 #include "i2c_device.h"
 #include "axp2101.h"
 
-#include <esp_log.h>
 #include <driver/i2c_master.h>
+#include <esp_lcd_ili9341.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
-#include <esp_lcd_ili9341.h>
+#include <esp_log.h>
+#include <esp_lvgl_port.h>
 #include <esp_timer.h>
+#include <lvgl.h>
+#include <algorithm>
+#include <atomic>
 #include "esp_video.h"
+#include "stroke_order/stroke_order_touch_input.h"
+
+#if CONFIG_STROKE_ORDER_LOCAL
+#include "stroke_order/stroke_order_controller.h"
+#endif
 
 #define TAG "M5StackCoreS3Board"
 
@@ -126,6 +135,9 @@ private:
     EspVideo* camera_;
     esp_timer_handle_t touchpad_timer_;
     PowerSaveTimer* power_save_timer_;
+    lv_indev_t* pointer_indev_ = nullptr;
+    std::atomic<uint32_t> touch_snapshot_{StrokeOrderTouchSnapshot::Encode(false, 0, 0)};
+    StrokeOrderTouchSequence touch_sequence_;
 
     void InitializePowerSaveTimer() {
         power_save_timer_ = new PowerSaveTimer(-1, 60, 300);
@@ -192,54 +204,120 @@ private:
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 
-    void PollTouchpad() {
-        static bool was_touched = false;
-        static int64_t touch_start_time = 0;
-        const int64_t TOUCH_THRESHOLD_MS = 500;  // 触摸时长阈值，超过500ms视为长按
-        
-        ft6336_->UpdateTouchPoint();
-        auto& touch_point = ft6336_->GetTouchPoint();
-        
-        // 检测触摸开始
-        if (touch_point.num > 0 && !was_touched) {
-            was_touched = true;
-            touch_start_time = esp_timer_get_time() / 1000; // 转换为毫秒
-        } 
-        // 检测触摸释放
-        else if (touch_point.num == 0 && was_touched) {
-            was_touched = false;
-            int64_t touch_duration = (esp_timer_get_time() / 1000) - touch_start_time;
-            
-            // 只有短触才触发
-            if (touch_duration < TOUCH_THRESHOLD_MS) {
-                auto& app = Application::GetInstance();
-                if (app.GetDeviceState() == kDeviceStateStarting) {
-                    EnterWifiConfigMode();
-                    return;
-                }
-                app.ToggleChatState();
-            }
+    void TransformTouch(int* x, int* y) {
+        int tx = *x;
+        int ty = *y;
+        if (DISPLAY_SWAP_XY) {
+            std::swap(tx, ty);
         }
+        if (DISPLAY_MIRROR_X) {
+            tx = DISPLAY_WIDTH - 1 - tx;
+        }
+        if (DISPLAY_MIRROR_Y) {
+            ty = DISPLAY_HEIGHT - 1 - ty;
+        }
+        if (tx < 0) {
+            tx = 0;
+        }
+        if (ty < 0) {
+            ty = 0;
+        }
+        if (tx >= DISPLAY_WIDTH) {
+            tx = DISPLAY_WIDTH - 1;
+        }
+        if (ty >= DISPLAY_HEIGHT) {
+            ty = DISPLAY_HEIGHT - 1;
+        }
+        *x = tx;
+        *y = ty;
+    }
+
+    void PollTouchpad() {
+        // I2C FT6336 access stays on this bounded 20 ms poll path only.
+        ft6336_->UpdateTouchPoint();
+        const auto& touch_point = ft6336_->GetTouchPoint();
+        const bool pressed = touch_point.num > 0;
+
+        auto sample =
+            StrokeOrderTouchSnapshot::Decode(touch_snapshot_.load(std::memory_order_relaxed));
+        if (pressed) {
+            int x = touch_point.x;
+            int y = touch_point.y;
+            TransformTouch(&x, &y);
+            sample.x = static_cast<uint16_t>(x);
+            sample.y = static_cast<uint16_t>(y);
+        }
+        touch_snapshot_.store(StrokeOrderTouchSnapshot::Encode(pressed, sample.x, sample.y),
+                              std::memory_order_release);
+
+        bool consume_on_press = false;
+        bool exclusive_on_release = false;
+#if CONFIG_STROKE_ORDER_LOCAL
+        if (pressed && !touch_sequence_.pressed()) {
+            consume_on_press = StrokeOrderController::GetInstance().ShouldConsumePointer(
+                static_cast<int>(sample.x), static_cast<int>(sample.y));
+        }
+        if (!pressed && touch_sequence_.pressed()) {
+            exclusive_on_release = StrokeOrderController::GetInstance().IsExclusiveTouch();
+        }
+#endif
+        const uint64_t now_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000);
+        if (touch_sequence_.Update(pressed, now_ms, consume_on_press, exclusive_on_release)) {
+            auto& app = Application::GetInstance();
+            if (app.GetDeviceState() == kDeviceStateStarting) {
+                EnterWifiConfigMode();
+                return;
+            }
+            app.ToggleChatState();
+        }
+    }
+
+    static void LvglPointerRead(lv_indev_t* indev, lv_indev_data_t* data) {
+        auto* board = static_cast<M5StackCoreS3Board*>(lv_indev_get_user_data(indev));
+        if (board == nullptr) {
+            data->state = LV_INDEV_STATE_RELEASED;
+            return;
+        }
+        const auto sample = StrokeOrderTouchSnapshot::Decode(
+            board->touch_snapshot_.load(std::memory_order_acquire));
+        data->point.x = sample.x;
+        data->point.y = sample.y;
+        data->state = sample.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
     }
 
     void InitializeFt6336TouchPad() {
         ESP_LOGI(TAG, "Init FT6336");
         ft6336_ = new Ft6336(i2c_bus_, 0x38);
-        
-        // 创建定时器，20ms 间隔
+
         esp_timer_create_args_t timer_args = {
-            .callback = [](void* arg) {
-                M5StackCoreS3Board* board = (M5StackCoreS3Board*)arg;
-                board->PollTouchpad();
-            },
+            .callback =
+                [](void* arg) {
+                    auto* board = static_cast<M5StackCoreS3Board*>(arg);
+                    board->PollTouchpad();
+                },
             .arg = this,
             .dispatch_method = ESP_TIMER_TASK,
             .name = "touchpad_timer",
             .skip_unhandled_events = true,
         };
-        
+
         ESP_ERROR_CHECK(esp_timer_create(&timer_args, &touchpad_timer_));
         ESP_ERROR_CHECK(esp_timer_start_periodic(touchpad_timer_, 20 * 1000));
+
+        if (lvgl_port_lock(1000)) {
+            pointer_indev_ = lv_indev_create();
+            if (pointer_indev_ != nullptr) {
+                lv_indev_set_type(pointer_indev_, LV_INDEV_TYPE_POINTER);
+                lv_indev_set_read_cb(pointer_indev_, LvglPointerRead);
+                lv_indev_set_display(pointer_indev_, lv_display_get_default());
+                lv_indev_set_user_data(pointer_indev_, this);
+            } else {
+                ESP_LOGE(TAG, "Failed to create LVGL pointer indev");
+            }
+            lvgl_port_unlock();
+        } else {
+            ESP_LOGE(TAG, "Failed to lock LVGL while adding pointer indev");
+        }
     }
 
     void InitializeSpi() {

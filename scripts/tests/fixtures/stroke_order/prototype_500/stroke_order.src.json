@@ -1,0 +1,36 @@
+{
+  "dual_person_official_pdf_verified": false,
+  "hanzi_writer_data": {
+    "commit": "68d10a4b21150cae5e1ebbd223eed289cf32d90c",
+    "dictionary_license_note": "Dictionary material associated with Make Me a Hanzi / related datasets may be LGPL or other copyleft terms. This converter only reads strokes/medians graphics JSON and does not vendor dictionary text.",
+    "graphics_license": "Arphic Public License",
+    "project": "hanzi-writer-data",
+    "repo": "https://github.com/chanind/hanzi-writer-data",
+    "upstream": "skishore/makemeahanzi"
+  },
+  "kind": "stroke_order_source_lock",
+  "not_a_release_library": true,
+  "not_commercially_reviewed": true,
+  "not_official_certification": true,
+  "official_page": "https://www.gov.cn/zwgk/2013-08/19/content_2469793.htm",
+  "official_pdf": "https://www.gov.cn/gzdt/att/att/site1/20130819/tygfhzb.pdf",
+  "official_table": {
+    "bytes": 100606660,
+    "document": "国发〔2013〕23号",
+    "page": "https://www.gov.cn/zwgk/2013-08/19/content_2469793.htm",
+    "pdf": "https://www.gov.cn/gzdt/att/att/site1/20130819/tygfhzb.pdf",
+    "range": "一级字表 0001-0500",
+    "sha256": "af85c706a53d3b3bbad818bcce7415ac9a2284ea14f79fe7f54ce1248a7bdac9",
+    "title": "通用规范汉字表"
+  },
+  "prototype": true,
+  "transcription_aid": {
+    "checkout_clean": true,
+    "commit": "f9786a82be6e1672bdc60f85760a9e4a3791d1f1",
+    "json_path": "table-of-general-standard-chinese-characters.json",
+    "json_sha256": "a9f0a21fb83a84dd695eaeec7b77743a6099ca559768c8275ae0c22c827917d0",
+    "license": "no explicit license in the checkout",
+    "repo": "https://github.com/leonsilicon/table-of-general-standard-chinese-characters",
+    "role": "prototype transcription aid only; not an official digital annex and not a commercial authorization source"
+  }
+}

@@ -1121,4 +1121,19 @@ menu "TAIJIPAI_S3_CONFIG"
         启动双声道
 endmenu
 
+menu "Stroke Order"
+    config STROKE_ORDER_LOCAL
+        bool "Enable local stroke-order prototype (CoreS3)"
+        default n
+        depends on BOARD_TYPE_M5STACK_CORE_S3 && !USE_EMOTE_MESSAGE_STYLE
+        help
+            Compile the bounded SOB1/SPY1 parsers, CoreS3 笔划 overlay, and
+            package the reviewed 500-character prototype into default assets
+            extra-files without network access. The clickable entry appears only
+            when SOB1 binds and LVGL pointer input exists. Missing SPY1 keeps
+            exact-only/fallback candidates. This is not a release 字库, not
+            official certification, does not parse SVG on device, and does not
+            implement type=stroke.
+endmenu
+
 endmenu

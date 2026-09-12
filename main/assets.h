@@ -51,7 +51,7 @@ private:
     Assets& operator=(const Assets&) = delete;
 
     bool InitializePartition();
-    void UnApplyPartition();
+    bool UnApplyPartition();
     static bool FindPartition(Assets* assets);
     static bool LoadSrmodelsFromIndex(Assets* assets, cJSON* root = nullptr);
     void UseBuiltInTextFontCapability();

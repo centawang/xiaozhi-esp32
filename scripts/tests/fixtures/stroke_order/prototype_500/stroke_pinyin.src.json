@@ -1,0 +1,20 @@
+{
+  "kind": "stroke_pinyin_source_lock",
+  "not_a_release_library": true,
+  "not_commercially_reviewed": true,
+  "not_official_certification": true,
+  "prototype": true,
+  "source": {
+    "fields": [
+      "kMandarin",
+      "kHanyuPinyin"
+    ],
+    "file": "Unihan_Readings.txt",
+    "license": "Unicode License v3",
+    "license_sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+    "primary": "kMandarin",
+    "unicode_version": "16.0.0",
+    "zip_bytes": 8382485,
+    "zip_sha256": "b8f000df69de7828d21326a2ffea462b04bc7560022989f7cc704f10521ef3e0"
+  }
+}

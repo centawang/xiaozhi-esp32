@@ -4,12 +4,20 @@
 #include "audio_codec.h"
 #include "board.h"
 #include "display.h"
+#include "listening_mode_selection.h"
+#include "listening_start_policy.h"
 #include "mcp_server.h"
 #include "mqtt_protocol.h"
+#include "protocol_selection.h"
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
+#if CONFIG_STROKE_ORDER_LOCAL
+#include "stroke_order/stroke_order_controller.h"
+#include "stroke_order/stroke_order_parse.h"
+#include "stroke_order/stroke_order_view.h"
+#endif
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -18,6 +26,44 @@
 #include <cstring>
 
 #define TAG "Application"
+
+static_assert(static_cast<int>(QueuedStartListeningMode::AutoStop) == kListeningModeAutoStop,
+              "QueuedStartListeningMode::AutoStop matches ListeningMode");
+static_assert(static_cast<int>(QueuedStartListeningMode::ManualStop) == kListeningModeManualStop,
+              "QueuedStartListeningMode::ManualStop matches ListeningMode");
+static_assert(static_cast<int>(QueuedStartListeningMode::Realtime) == kListeningModeRealtime,
+              "QueuedStartListeningMode::Realtime matches ListeningMode");
+
+#if CONFIG_STROKE_ORDER_LOCAL
+namespace {
+
+struct BoundedStringProbe {
+    const char* data = nullptr;
+    size_t size = 0;
+    bool present = false;
+    bool valid = false;
+};
+
+BoundedStringProbe ProbeJsonString(const cJSON* root, const char* name, size_t max_bytes) {
+    BoundedStringProbe result;
+    const cJSON* item = cJSON_GetObjectItem(root, name);
+    if (!cJSON_IsString(item) || item->valuestring == nullptr) {
+        return result;
+    }
+    result.present = true;
+    result.data = item->valuestring;
+    const void* terminator = std::memchr(result.data, '\0', max_bytes + 1U);
+    if (terminator == nullptr) {
+        result.size = max_bytes + 1U;
+        return result;
+    }
+    result.size = static_cast<const char*>(terminator) - result.data;
+    result.valid = true;
+    return result;
+}
+
+}  // namespace
+#endif
 
 Application::Application() {
     event_group_ = xEventGroupCreate();
@@ -53,7 +99,17 @@ Application::~Application() {
     vEventGroupDelete(event_group_);
 }
 
-bool Application::SetDeviceState(DeviceState state) { return state_machine_.TransitionTo(state); }
+bool Application::SetDeviceState(DeviceState state) {
+    const bool transitioned = state_machine_.TransitionTo(state);
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (transitioned) {
+        // This narrow hook closes the overlay immediately on every non-Idle
+        // transition, even before the queued state-change UI refresh runs.
+        StrokeOrderView::GetInstance().OnDeviceStateChanged(state);
+    }
+#endif
+    return transitioned;
+}
 
 void Application::Initialize() {
     auto& board = Board::GetInstance();
@@ -62,6 +118,10 @@ void Application::Initialize() {
     // Setup the display
     auto display = board.GetDisplay();
     display->SetupUI();
+#if CONFIG_STROKE_ORDER_LOCAL
+    StrokeOrderView::GetInstance().Attach(display, &StrokeOrderController::GetInstance(),
+                                          &stroke_round_);
+#endif
     // Print board name/version info
     display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());
 
@@ -75,6 +135,9 @@ void Application::Initialize() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
     };
     callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        PublishStrokeCancelFence(StrokeAbortReason::NewNormalSession);
+#endif
         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
     };
     callbacks.on_vad_change = [this](bool speaking) {
@@ -104,7 +167,13 @@ void Application::Initialize() {
 
         switch (event) {
             case NetworkEvent::Scanning:
-                display->ShowNotification(Lang::Strings::SCANNING_WIFI, 30000);
+#if CONFIG_STROKE_ORDER_LOCAL
+                PublishStrokeCancelFence(StrokeAbortReason::ChannelClosed);
+#endif
+                Schedule([]() {
+                    Board::GetInstance().GetDisplay()->ShowNotification(
+                        Lang::Strings::SCANNING_WIFI, 30000);
+                });
                 xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
             case NetworkEvent::Connecting: {
@@ -128,6 +197,9 @@ void Application::Initialize() {
                 break;
             }
             case NetworkEvent::Disconnected:
+#if CONFIG_STROKE_ORDER_LOCAL
+                PublishStrokeCancelFence(StrokeAbortReason::ChannelClosed);
+#endif
                 xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
             case NetworkEvent::WifiConfigModeEnter:
@@ -174,7 +246,11 @@ void Application::Run() {
         MAIN_EVENT_VAD_CHANGE | MAIN_EVENT_CLOCK_TICK | MAIN_EVENT_ERROR |
         MAIN_EVENT_NETWORK_CONNECTED | MAIN_EVENT_NETWORK_DISCONNECTED | MAIN_EVENT_TOGGLE_CHAT |
         MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING | MAIN_EVENT_ACTIVATION_DONE |
-        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED;
+        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED
+#if CONFIG_STROKE_ORDER_LOCAL
+        | MAIN_EVENT_STROKE_START | MAIN_EVENT_STROKE_ABORT
+#endif
+        ;
 
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -214,6 +290,16 @@ void Application::Run() {
         if (bits & MAIN_EVENT_TOGGLE_CHAT) {
             HandleToggleChatEvent();
         }
+
+#if CONFIG_STROKE_ORDER_LOCAL
+        if (bits & MAIN_EVENT_STROKE_ABORT) {
+            HandleStrokeAbortEvent();
+        }
+
+        if (bits & MAIN_EVENT_STROKE_START) {
+            HandleStrokeStartEvent();
+        }
+#endif
 
         if (bits & MAIN_EVENT_START_LISTENING) {
             HandleStartListeningEvent();
@@ -261,6 +347,15 @@ void Application::Run() {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
+#if CONFIG_STROKE_ORDER_LOCAL
+            const auto timeout =
+                stroke_round_.CheckTimeouts(static_cast<uint64_t>(esp_timer_get_time() / 1000));
+            if (timeout.kind == StrokeRoundCoordinator::TimeoutKind::Speech) {
+                AbortStrokeRound(timeout.generation, StrokeAbortReason::SpeechTimeout);
+            } else if (timeout.kind == StrokeRoundCoordinator::TimeoutKind::Candidates) {
+                AbortStrokeRound(timeout.generation, StrokeAbortReason::CandidateTimeout);
+            }
+#endif
 
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
@@ -300,6 +395,12 @@ void Application::HandleNetworkConnectedEvent() {
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+    if (stroke_generation != 0) {
+        AbortStrokeRound(stroke_generation, StrokeAbortReason::ChannelClosed);
+    }
+#endif
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
@@ -408,7 +509,8 @@ void Application::CheckAssetsVersion() {
         }
     }
 
-    // Apply assets
+    // Apply assets. Assets::Apply() unconditionally rebinds (or invalidates)
+    // the local StrokeOrder copy after the new partition mapping is active.
     assets.Apply();
     display->SetChatMessage("system", "");
     display->SetEmotion("robot_2");
@@ -499,26 +601,83 @@ void Application::InitializeProtocol() {
 
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
-    if (ota_->HasMqttConfig()) {
-        protocol_ = std::make_unique<MqttProtocol>();
-    } else if (ota_->HasWebsocketConfig()) {
+    const bool has_mqtt_config = ota_->HasMqttConfig();
+    const bool has_websocket_config = ota_->HasWebsocketConfig();
+#if CONFIG_STROKE_ORDER_LOCAL
+    const bool prefer_websocket_for_stroke_voice = true;
+#else
+    const bool prefer_websocket_for_stroke_voice = false;
+#endif
+    const ProtocolSelectionInput selection_input{has_mqtt_config, has_websocket_config,
+                                                 prefer_websocket_for_stroke_voice};
+    const ProtocolTransport selected = SelectProtocolTransport(selection_input);
+    ESP_LOGI(
+        TAG,
+        "Protocol selection: mqtt_config=%d websocket_config=%d stroke_local_pref=%d selected=%s",
+        has_mqtt_config ? 1 : 0, has_websocket_config ? 1 : 0,
+        prefer_websocket_for_stroke_voice ? 1 : 0, ProtocolTransportName(selected));
+
+    if (selected == ProtocolTransport::Websocket) {
         protocol_ = std::make_unique<WebsocketProtocol>();
     } else {
-        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
+        if (!has_mqtt_config && !has_websocket_config) {
+            ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
+        }
         protocol_ = std::make_unique<MqttProtocol>();
     }
+
+    ESP_LOGI(TAG, "Stroke voice availability: correlated_open=%d stroke_voice=%d",
+             protocol_->SupportsCorrelatedSessionOpen() ? 1 : 0,
+             protocol_->SupportsStrokeVoiceRouting() ? 1 : 0);
+
+#if CONFIG_STROKE_ORDER_LOCAL
+    const bool stroke_voice = StrokeVoiceRoutingAvailable();
+    stroke_voice_transport_available_.store(stroke_voice, std::memory_order_release);
+    StrokeOrderView::GetInstance().SetVoiceTransportAvailable(stroke_voice);
+#endif
 
     protocol_->OnConnected([this]() { DismissAlert(); });
 
     protocol_->OnNetworkError([this](const std::string& message) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        PublishStrokeCancelFence(StrokeAbortReason::ChannelClosed);
+#endif
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        if (packet == nullptr) {
+            return;
+        }
+        const bool session_valid = StrokeRoundCoordinator::ValidateSessionId(
+            packet->session_id.data(), packet->session_id.size());
+        const auto route = stroke_round_.CaptureRoute(StrokeRoundCoordinator::MessageKind::Audio,
+                                                      packet->session_id.data(),
+                                                      packet->session_id.size(), session_valid);
+        if (route.decision == StrokeRoundCoordinator::RouteDecision::FailStroke) {
+            if (!route.session_id_valid) {
+                stroke_voice_transport_available_.store(false, std::memory_order_release);
+            }
+            RequestAbortStrokeRound(route.generation,
+                                    route.session_id_valid
+                                        ? StrokeAbortReason::InvalidSessionIdentity
+                                        : StrokeAbortReason::MissingSessionIdentity);
+            return;
+        }
+        if (route.decision != StrokeRoundCoordinator::RouteDecision::PassNormal) {
+            return;
+        }
+        std::lock_guard<std::mutex> route_lock(stroke_audio_route_mutex_);
+        if (stroke_round_.RevalidateNormal(route) && GetDeviceState() == kDeviceStateSpeaking) {
+            audio_service_.PushPacketToDecodeQueue(std::move(packet));
+        }
+#else
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
+#endif
     });
 
     protocol_->OnAudioChannelOpened([this, codec, &board]() {
@@ -531,13 +690,53 @@ void Application::InitializeProtocol() {
         }
     });
 
-    protocol_->OnAudioChannelClosed([this, &board]() {
+    protocol_->OnAudioChannelClosed([this, &board](const AudioChannelCloseInfo& info) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        const uint64_t opening_generation = MatchStrokeOpenAttempt(info.open_attempt_id);
+        const bool valid = StrokeRoundCoordinator::ValidateSessionId(info.session_id.data(),
+                                                                     info.session_id.size());
+        const auto close = stroke_round_.CaptureChannelClose(info.session_id.data(),
+                                                             info.session_id.size(), valid);
+        const uint64_t closing_generation =
+            opening_generation != 0
+                ? opening_generation
+                : (info.open_attempt_id == 0 &&
+                           close.decision ==
+                               StrokeRoundCoordinator::ChannelCloseDecision::AbortStroke
+                       ? close.generation
+                       : 0);
+        bool close_fenced = false;
+        if (closing_generation != 0) {
+            std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
+            close_fenced = stroke_round_.PublishCancelFence(closing_generation);
+        }
+        if (close_fenced) {
+            // Publish the exact generation fence on the transport callback
+            // thread. Main-task cleanup may run after STATE_CHANGED.
+            Schedule([this, closing_generation]() {
+                AbortStrokeRound(closing_generation, StrokeAbortReason::ChannelClosed);
+            });
+            return;
+        }
+        Schedule([this, &board, close]() {
+            if (close.decision != StrokeRoundCoordinator::ChannelCloseDecision::Normal ||
+                !stroke_round_.CommitNormalChannelClose(close)) {
+                return;
+            }
+            board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+            DrainStreamingAudio();
+            auto display = Board::GetInstance().GetDisplay();
+            display->SetChatMessage("system", "");
+            SetDeviceState(kDeviceStateIdle);
+        });
+#else
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
         });
+#endif
     });
 
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
@@ -548,17 +747,59 @@ void Application::InitializeProtocol() {
             return;
         }
         if (strcmp(type->valuestring, "tts") == 0) {
+#if CONFIG_STROKE_ORDER_LOCAL
+            const auto session =
+                ProbeJsonString(root, "session_id", StrokeRoundCoordinator::kMaxSessionIdBytes);
+            const bool session_valid = session.valid && StrokeRoundCoordinator::ValidateSessionId(
+                                                            session.data, session.size);
+            const auto route =
+                stroke_round_.CaptureRoute(StrokeRoundCoordinator::MessageKind::Tts, session.data,
+                                           session.size, session_valid);
+            if (route.decision == StrokeRoundCoordinator::RouteDecision::FailStroke) {
+                if (!route.session_id_valid) {
+                    stroke_voice_transport_available_.store(false, std::memory_order_release);
+                }
+                RequestAbortStrokeRound(route.generation,
+                                        route.session_id_valid
+                                            ? StrokeAbortReason::InvalidSessionIdentity
+                                            : StrokeAbortReason::MissingSessionIdentity);
+                return;
+            }
+            if (route.decision != StrokeRoundCoordinator::RouteDecision::PassNormal) {
+                return;
+            }
+#endif
             auto state = cJSON_GetObjectItem(root, "state");
             if (!cJSON_IsString(state)) {
                 return;
             }
             if (strcmp(state->valuestring, "start") == 0) {
-                Schedule([this]() {
+                Schedule([this
+#if CONFIG_STROKE_ORDER_LOCAL
+                          ,
+                          route
+#endif
+                ]() {
+#if CONFIG_STROKE_ORDER_LOCAL
+                    if (!stroke_round_.RevalidateNormal(route)) {
+                        return;
+                    }
+#endif
                     aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
-                Schedule([this]() {
+                Schedule([this
+#if CONFIG_STROKE_ORDER_LOCAL
+                          ,
+                          route
+#endif
+                ]() {
+#if CONFIG_STROKE_ORDER_LOCAL
+                    if (!stroke_round_.RevalidateNormal(route)) {
+                        return;
+                    }
+#endif
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -576,32 +817,142 @@ void Application::InitializeProtocol() {
                         glyphs.clear();
                     }
                     ESP_LOGI(TAG, "<< %s", text->valuestring);
-                    Schedule([display, message = std::string(text->valuestring),
-                              glyphs = std::move(glyphs), bpp]() {
+                    Schedule([this, display, message = std::string(text->valuestring),
+                              glyphs = std::move(glyphs), bpp
+#if CONFIG_STROKE_ORDER_LOCAL
+                              ,
+                              route
+#endif
+                    ]() {
+#if CONFIG_STROKE_ORDER_LOCAL
+                        if (!stroke_round_.RevalidateNormal(route)) {
+                            return;
+                        }
+#endif
                         display->AddTextGlyphs(glyphs, bpp);
                         display->SetChatMessage("assistant", message.c_str());
                     });
                 }
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
+#if CONFIG_STROKE_ORDER_LOCAL
+            const auto session =
+                ProbeJsonString(root, "session_id", StrokeRoundCoordinator::kMaxSessionIdBytes);
+            const bool session_valid = session.valid && StrokeRoundCoordinator::ValidateSessionId(
+                                                            session.data, session.size);
+            const auto route =
+                stroke_round_.CaptureRoute(StrokeRoundCoordinator::MessageKind::Stt, session.data,
+                                           session.size, session_valid);
+            if (route.decision == StrokeRoundCoordinator::RouteDecision::FailStroke) {
+                if (!route.session_id_valid) {
+                    stroke_voice_transport_available_.store(false, std::memory_order_release);
+                }
+                RequestAbortStrokeRound(route.generation,
+                                        route.session_id_valid
+                                            ? StrokeAbortReason::InvalidSessionIdentity
+                                            : StrokeAbortReason::MissingSessionIdentity);
+                return;
+            }
+            if (route.decision == StrokeRoundCoordinator::RouteDecision::Drop) {
+                return;
+            }
             auto text = cJSON_GetObjectItem(root, "text");
-            if (cJSON_IsString(text)) {
+            if (route.decision == StrokeRoundCoordinator::RouteDecision::InterceptStrokeStt) {
+                const auto bounded_text =
+                    ProbeJsonString(root, "text", StrokeOrderParse::kMaxBytes);
+                if (!bounded_text.valid) {
+                    RequestAbortStrokeRound(route.generation, StrokeAbortReason::InvalidPayload);
+                    return;
+                }
+                const auto parsed = StrokeOrderParse::Parse(bounded_text.data, bounded_text.size);
+                if (parsed.status == StrokeOrderParse::Status::InvalidUtf8 ||
+                    parsed.status == StrokeOrderParse::Status::TooLong) {
+                    RequestAbortStrokeRound(route.generation, StrokeAbortReason::InvalidPayload);
+                    return;
+                }
+                std::string message(bounded_text.data, bounded_text.size);
+                Schedule([this, route, message = std::move(message)]() {
+                    if (!stroke_round_.CommitStrokeStt(route)) {
+                        return;
+                    }
+                    FinishStrokeListening(route.generation);
+                    if (!StrokeOrderView::GetInstance().HandleVoiceSttFromMain(route.generation,
+                                                                               message)) {
+                        AbortStrokeRound(route.generation, StrokeAbortReason::StartFailed);
+                    }
+                });
+                return;
+            }
+            if (cJSON_IsString(text) && text->valuestring != nullptr) {
+                std::string message(text->valuestring);
                 std::vector<TextGlyph> glyphs;
                 uint8_t bpp = 0;
                 if (!TextGlyphPayload::Parse(root, glyphs, bpp)) {
                     glyphs.clear();
                 }
-                ESP_LOGI(TAG, ">> %s", text->valuestring);
-                Schedule([display, message = std::string(text->valuestring),
+                ESP_LOGI(TAG, ">> %s", message.c_str());
+                Schedule([this, display, route, message = std::move(message),
                           glyphs = std::move(glyphs), bpp]() {
+                    if (!stroke_round_.RevalidateNormal(route)) {
+                        return;
+                    }
                     display->AddTextGlyphs(glyphs, bpp);
                     display->SetChatMessage("user", message.c_str());
                 });
             }
+#else
+            auto text = cJSON_GetObjectItem(root, "text");
+            if (cJSON_IsString(text) && text->valuestring != nullptr) {
+                std::string message(text->valuestring);
+                std::vector<TextGlyph> glyphs;
+                uint8_t bpp = 0;
+                if (!TextGlyphPayload::Parse(root, glyphs, bpp)) {
+                    glyphs.clear();
+                }
+                ESP_LOGI(TAG, ">> %s", message.c_str());
+                Schedule(
+                    [display, message = std::move(message), glyphs = std::move(glyphs), bpp]() {
+                        display->AddTextGlyphs(glyphs, bpp);
+                        display->SetChatMessage("user", message.c_str());
+                    });
+            }
+#endif
         } else if (strcmp(type->valuestring, "llm") == 0) {
+#if CONFIG_STROKE_ORDER_LOCAL
+            const auto session =
+                ProbeJsonString(root, "session_id", StrokeRoundCoordinator::kMaxSessionIdBytes);
+            const bool session_valid = session.valid && StrokeRoundCoordinator::ValidateSessionId(
+                                                            session.data, session.size);
+            const auto route =
+                stroke_round_.CaptureRoute(StrokeRoundCoordinator::MessageKind::Llm, session.data,
+                                           session.size, session_valid);
+            if (route.decision == StrokeRoundCoordinator::RouteDecision::FailStroke) {
+                if (!route.session_id_valid) {
+                    stroke_voice_transport_available_.store(false, std::memory_order_release);
+                }
+                RequestAbortStrokeRound(route.generation,
+                                        route.session_id_valid
+                                            ? StrokeAbortReason::InvalidSessionIdentity
+                                            : StrokeAbortReason::MissingSessionIdentity);
+                return;
+            }
+            if (route.decision != StrokeRoundCoordinator::RouteDecision::PassNormal) {
+                return;
+            }
+#endif
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(emotion)) {
-                Schedule([display, emotion_str = std::string(emotion->valuestring)]() {
+                Schedule([this, display, emotion_str = std::string(emotion->valuestring)
+#if CONFIG_STROKE_ORDER_LOCAL
+                                             ,
+                          route
+#endif
+                ]() {
+#if CONFIG_STROKE_ORDER_LOCAL
+                    if (!stroke_round_.RevalidateNormal(route)) {
+                        return;
+                    }
+#endif
                     display->SetEmotion(emotion_str.c_str());
                 });
             }
@@ -616,6 +967,9 @@ void Application::InitializeProtocol() {
                 ESP_LOGI(TAG, "System command: %s", command->valuestring);
                 if (strcmp(command->valuestring, "reboot") == 0) {
                     // Do a reboot if user requests a OTA update
+#if CONFIG_STROKE_ORDER_LOCAL
+                    PublishStrokeCancelFence(StrokeAbortReason::Reboot);
+#endif
                     Schedule([this]() { Reboot(); });
                 } else {
                     ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
@@ -679,6 +1033,9 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
 void Application::Alert(const char* status, const char* message, const char* emotion,
                         const std::string_view& sound) {
     ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
+#if CONFIG_STROKE_ORDER_LOCAL
+    PublishStrokeCancelFence(StrokeAbortReason::Alert);
+#endif
     auto display = Board::GetInstance().GetDisplay();
     display->SetStatus(status);
     display->SetEmotion(emotion);
@@ -690,6 +1047,9 @@ void Application::Alert(const char* status, const char* message, const char* emo
 
 void Application::DismissAlert() {
     if (GetDeviceState() == kDeviceStateIdle) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        StrokeOrderView::GetInstance().OnDeviceStateChanged(kDeviceStateIdle);
+#endif
         auto display = Board::GetInstance().GetDisplay();
         display->SetStatus(Lang::Strings::STANDBY);
         display->SetEmotion("neutral");
@@ -697,13 +1057,345 @@ void Application::DismissAlert() {
     }
 }
 
-void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVENT_TOGGLE_CHAT); }
+void Application::ToggleChatState() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    PublishStrokeCancelFence(StrokeAbortReason::NewNormalSession);
+#endif
+    xEventGroupSetBits(event_group_, MAIN_EVENT_TOGGLE_CHAT);
+}
 
-void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING); }
+void Application::StartListening() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    PublishStrokeCancelFence(StrokeAbortReason::NewNormalSession);
+#endif
+    QueueListeningRequest(0);
+}
 
-void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
+void Application::QueueListeningRequest(uint64_t expected_generation) {
+    {
+        std::lock_guard<std::mutex> lock(listening_request_mutex_);
+        // One bounded slot is sufficient because an input gesture is idempotent.
+        // A newer request replaces an older one, but its explicit generation is
+        // never converted to the ordinary generation-0 route.
+        listening_request_generation_ = expected_generation;
+        listening_request_pending_ = true;
+    }
+    xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
+}
+
+void Application::StopListening() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    PublishStrokeCancelFence(StrokeAbortReason::NewNormalSession);
+#endif
+    xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
+}
+
+#if CONFIG_STROKE_ORDER_LOCAL
+void Application::RequestStartStrokeRound(uint64_t expected_generation) {
+    // A retry/replacement can race the queued STATE_CHANGED handler from the
+    // old round. Fence only the explicitly expected round (or the current one
+    // for a fresh entry) before publishing the start event.
+    {
+        std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
+        if (expected_generation != 0) {
+            stroke_round_.PublishCancelFence(expected_generation);
+        } else {
+            stroke_round_.PublishCurrentCancelFence();
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        stroke_start_pending_ = true;
+        stroke_start_expected_generation_ = expected_generation;
+    }
+    xEventGroupSetBits(event_group_, MAIN_EVENT_STROKE_START);
+}
+
+void Application::RequestAbortStrokeRound(uint64_t expected_generation, StrokeAbortReason reason) {
+    if (expected_generation != 0) {
+        std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
+        stroke_round_.PublishCancelFence(expected_generation);
+    }
+    {
+        std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        stroke_abort_pending_ = true;
+        stroke_abort_expected_generation_ = expected_generation;
+        stroke_abort_reason_ = reason;
+    }
+    xEventGroupSetBits(event_group_, MAIN_EVENT_STROKE_ABORT);
+}
+
+uint64_t Application::CurrentStrokeGeneration() const { return stroke_round_.CurrentGeneration(); }
+
+void Application::PublishStrokeCancelFence(StrokeAbortReason reason) {
+    uint64_t generation = 0;
+    {
+        std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
+        generation = stroke_round_.PublishCurrentCancelFence();
+    }
+    if (generation == 0) {
+        return;
+    }
+    RequestAbortStrokeRound(generation, reason);
+}
+
+bool Application::StrokeVoiceRoutingAvailable() const {
+    return protocol_ && protocol_->SupportsCorrelatedSessionOpen() &&
+           protocol_->SupportsStrokeVoiceRouting();
+}
+
+void Application::BindStrokeOpenAttempt(uint64_t generation, uint64_t open_attempt_id) {
+    std::lock_guard<std::mutex> lock(stroke_open_attempt_mutex_);
+    stroke_open_attempt_generation_ = generation;
+    stroke_open_attempt_id_ = open_attempt_id;
+}
+
+uint64_t Application::MatchStrokeOpenAttempt(uint64_t open_attempt_id) {
+    if (open_attempt_id == 0) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(stroke_open_attempt_mutex_);
+    return stroke_open_attempt_id_ == open_attempt_id ? stroke_open_attempt_generation_ : 0;
+}
+
+void Application::ClearStrokeOpenAttempt(uint64_t generation) {
+    std::lock_guard<std::mutex> lock(stroke_open_attempt_mutex_);
+    if (generation == 0 || stroke_open_attempt_generation_ != generation) {
+        return;
+    }
+    stroke_open_attempt_id_ = 0;
+    stroke_open_attempt_generation_ = 0;
+}
+
+void Application::AbandonCancelledStrokeListening(uint64_t expected_generation) {
+    if (expected_generation == 0) {
+        return;
+    }
+    ClearStrokeOpenAttempt(expected_generation);
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        stroke_round_.CloseCurrentChannel();
+        protocol_->CloseAudioChannel();
+    }
+    DrainStreamingAudio();
+    if (IsStrokeAbortPending(expected_generation)) {
+        HandleStrokeAbortEvent();
+        return;
+    }
+    AbortStrokeRound(expected_generation, StrokeAbortReason::NewNormalSession);
+}
+
+void Application::HandleStrokeStartEvent() {
+    uint64_t expected_generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        if (!stroke_start_pending_) {
+            return;
+        }
+        expected_generation = stroke_start_expected_generation_;
+        stroke_start_pending_ = false;
+    }
+    BeginStrokeRoundFromMain(expected_generation);
+}
+
+bool Application::IsStrokeAbortPending(uint64_t expected_generation) {
+    std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+    return stroke_abort_pending_ && expected_generation != 0 &&
+           stroke_abort_expected_generation_ == expected_generation;
+}
+
+void Application::HandleStrokeAbortEvent() {
+    uint64_t expected_generation = 0;
+    StrokeAbortReason reason = StrokeAbortReason::UserClose;
+    {
+        std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        if (!stroke_abort_pending_) {
+            return;
+        }
+        expected_generation = stroke_abort_expected_generation_;
+        reason = stroke_abort_reason_;
+        stroke_abort_pending_ = false;
+    }
+    AbortStrokeRound(expected_generation, reason);
+}
+
+void Application::BeginStrokeRoundFromMain(uint64_t expected_generation) {
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+    const uint64_t current = stroke_round_.CurrentGeneration();
+    if (expected_generation != 0 && expected_generation != current &&
+        !(current == 0 && stroke_round_.IsLatestGeneration(expected_generation))) {
+        return;
+    }
+    if (current != 0) {
+        AbortStrokeRound(current, StrokeAbortReason::ReplacedByNewStroke);
+    } else if (StrokeOrderView::GetInstance().IsOverlayActive()) {
+        StrokeOrderView::GetInstance().AbortFromMain(0);
+    }
+
+    const bool stroke_voice = StrokeVoiceRoutingAvailable() &&
+                              stroke_voice_transport_available_.load(std::memory_order_acquire);
+    if (!stroke_voice) {
+        const uint64_t generation =
+            stroke_round_.BeginRound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
+        BeginLocalStrokeCandidatesFromMain(generation);
+        return;
+    }
+
+    // A stroke capture always owns a fresh channel. Retire and close any old
+    // channel before publishing the new generation so delayed close callbacks
+    // cannot be mistaken for the new round.
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        stroke_round_.CloseCurrentChannel();
+        protocol_->CloseAudioChannel();
+    }
+    DrainStreamingAudio();
+    const uint64_t generation =
+        stroke_round_.BeginRound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
+    if (!StrokeOrderView::GetInstance().StartVoiceSessionFromMain(generation)) {
+        AbortStrokeRound(generation, StrokeAbortReason::StartFailed);
+        return;
+    }
+    QueueListeningRequest(generation);
+}
+
+void Application::BeginLocalStrokeCandidatesFromMain(uint64_t generation) {
+    if (generation == 0) {
+        return;
+    }
+    if (!StrokeOrderView::GetInstance().StartLocalCandidateSessionFromMain(generation)) {
+        AbortStrokeRound(generation, StrokeAbortReason::StartFailed);
+        Board::GetInstance().GetDisplay()->ShowNotification("请点选候选字或关闭后重试");
+        return;
+    }
+    Board::GetInstance().GetDisplay()->ShowNotification("当前连接仅支持点选候选字");
+}
+
+void Application::AbortStrokeRound(uint64_t expected_generation, StrokeAbortReason reason) {
+    if (expected_generation == 0) {
+        StrokeOrderView::GetInstance().AbortFromMain(0);
+        return;
+    }
+
+    ClearStrokeOpenAttempt(expected_generation);
+    const auto state = GetDeviceState();
+    StrokeRoundCoordinator::AbortResult aborted;
+    {
+        // Invalidate routing before any externally visible stop/close action.
+        // The same lock prevents a downlink packet from passing revalidation
+        // while the decoder queues are being isolated.
+        std::lock_guard<std::mutex> route_lock(stroke_audio_route_mutex_);
+        aborted = stroke_round_.AbortRound(expected_generation);
+        if (!aborted.matched) {
+            return;
+        }
+        DrainStreamingAudio();
+    }
+
+    if (protocol_ && state == kDeviceStateListening) {
+        protocol_->SendStopListening();
+    } else if (protocol_ && state == kDeviceStateSpeaking) {
+        protocol_->SendAbortSpeaking(kAbortReasonNone);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(listening_request_mutex_);
+        if (listening_request_pending_ && listening_request_generation_ == expected_generation) {
+            listening_request_pending_ = false;
+        }
+    }
+    active_listening_generation_ = 0;
+    pending_listening_start_ = false;
+
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel();
+    }
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    StrokeOrderView::GetInstance().AbortFromMain(expected_generation);
+    if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+        state == kDeviceStateSpeaking) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+
+    if (!stroke_voice_transport_available_.load(std::memory_order_acquire)) {
+        StrokeOrderView::GetInstance().SetVoiceTransportAvailable(false);
+    }
+    if (reason == StrokeAbortReason::SpeechTimeout) {
+        StrokeOrderView::GetInstance().ShowSpeechTimedOutFromMain();
+    } else if (reason == StrokeAbortReason::MissingSessionIdentity) {
+        Board::GetInstance().GetDisplay()->ShowNotification("Stroke voice unavailable");
+    } else if (reason == StrokeAbortReason::InvalidSessionIdentity) {
+        Board::GetInstance().GetDisplay()->ShowNotification("Stroke session identity error");
+    }
+}
+
+void Application::FinishStrokeListening(uint64_t expected_generation) {
+    if (!stroke_round_.IsCurrentGeneration(expected_generation)) {
+        return;
+    }
+    ClearStrokeOpenAttempt(expected_generation);
+    const auto state = GetDeviceState();
+    if (protocol_ && state == kDeviceStateListening) {
+        protocol_->SendStopListening();
+    }
+    {
+        std::lock_guard<std::mutex> route_lock(stroke_audio_route_mutex_);
+        if (!stroke_round_.RetireStrokeChannel(expected_generation)) {
+            return;
+        }
+        DrainStreamingAudio();
+    }
+    active_listening_generation_ = 0;
+    pending_listening_start_ = false;
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        protocol_->CloseAudioChannel();
+    }
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+        state == kDeviceStateSpeaking) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+}
+
+bool Application::BindOpenedAudioChannel(uint64_t expected_generation,
+                                         std::string_view session_id) {
+    if (expected_generation != 0 &&
+        !StrokeRoundCoordinator::ValidateSessionId(session_id.data(), session_id.size())) {
+        stroke_voice_transport_available_.store(false, std::memory_order_release);
+    }
+    return stroke_round_.BindOpenedChannel(expected_generation, session_id);
+}
+
+void Application::DrainStreamingAudio() { audio_service_.ResetStreamingState(); }
+#endif
+
+void Application::RecoverOrdinaryListeningStartFailure() {
+    pending_listening_start_ = false;
+    active_listening_generation_ = 0;
+    play_popup_on_listening_ = false;
+    audio_service_.ResetStreamingState();
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        stroke_round_.CloseCurrentChannel();
+#endif
+        protocol_->CloseAudioChannel();
+    }
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    SetDeviceState(kDeviceStateIdle);
+    // Do not wait for the queued Idle UI handler: a failed wake-word re-listen
+    // must immediately restore the detector that fired the event.
+    audio_service_.EnableWakeWordDetection(true);
+}
 
 void Application::HandleToggleChatEvent() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+    if (stroke_generation != 0) {
+        AbortStrokeRound(stroke_generation, StrokeAbortReason::NewNormalSession);
+    } else if (StrokeOrderView::GetInstance().IsOverlayActive()) {
+        StrokeOrderView::GetInstance().AbortFromMain(0);
+    }
+#endif
     auto state = GetDeviceState();
 
     if (state == kDeviceStateActivating) {
@@ -729,9 +1421,19 @@ void Application::HandleToggleChatEvent() {
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
             // Schedule to let the state change be processed first (UI update)
-            Schedule([this, mode]() { ContinueOpenAudioChannel(mode); });
+            Schedule([this, mode]() { ContinueOpenAudioChannel(mode, 0); });
             return;
         }
+#if CONFIG_STROKE_ORDER_LOCAL
+        if (!BindOpenedAudioChannel(0, protocol_->session_id())) {
+            stroke_round_.CloseCurrentChannel();
+            protocol_->CloseAudioChannel();
+            DrainStreamingAudio();
+            Board::GetInstance().GetDisplay()->ShowNotification("Session identity unavailable");
+            return;
+        }
+#endif
+        active_listening_generation_ = 0;
         SetListeningMode(mode);
     } else if (state == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonNone);
@@ -740,29 +1442,119 @@ void Application::HandleToggleChatEvent() {
     }
 }
 
-void Application::ContinueOpenAudioChannel(ListeningMode mode) {
-    // Check state again in case it was changed during scheduling
+void Application::ContinueOpenAudioChannel(ListeningMode mode, uint64_t expected_generation) {
+    // Check both state and generation before entering the blocking open.
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
     }
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (expected_generation != 0 && (stroke_round_.HasCancelFence(expected_generation) ||
+                                     !stroke_round_.CanContinueOpen(expected_generation) ||
+                                     IsStrokeAbortPending(expected_generation))) {
+        AbandonCancelledStrokeListening(expected_generation);
+        return;
+    }
+    if (expected_generation == 0 &&
+        (!stroke_round_.CanContinueOpen(expected_generation) || stroke_round_.IsRoundActive())) {
+        return;
+    }
+#endif
 
-    // Switch to performance mode before connecting to reduce latency
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 
-    if (!protocol_->IsAudioChannelOpened()) {
-        if (!protocol_->OpenAudioChannel()) {
-            // Return to idle so the device is not stuck in the connecting
-            // state (not every failure path reports a network error)
-            SetDeviceState(kDeviceStateIdle);
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (expected_generation != 0 && protocol_->IsAudioChannelOpened()) {
+        AbortStrokeRound(expected_generation, StrokeAbortReason::StartFailed);
+        return;
+    }
+    std::string opened_session_id;
+    uint64_t open_attempt_id = 0;
+    if (expected_generation != 0) {
+        open_attempt_id = protocol_->ReserveAudioChannelOpenAttempt();
+        if (open_attempt_id == 0) {
+            AbortStrokeRound(expected_generation, StrokeAbortReason::StartFailed);
             return;
         }
+        BindStrokeOpenAttempt(expected_generation, open_attempt_id);
+    }
+    const bool opened = protocol_->IsAudioChannelOpened() ||
+                        protocol_->OpenAudioChannel(&opened_session_id, open_attempt_id);
+#else
+    const bool opened = protocol_->IsAudioChannelOpened() || protocol_->OpenAudioChannel();
+#endif
+    if (!opened || !protocol_->IsAudioChannelOpened()) {
+        if (expected_generation != 0) {
+#if CONFIG_STROKE_ORDER_LOCAL
+            ClearStrokeOpenAttempt(expected_generation);
+            AbortStrokeRound(expected_generation, StrokeAbortReason::StartFailed);
+            protocol_->CloseAudioChannel();
+#endif
+        } else {
+            SetDeviceState(kDeviceStateIdle);
+        }
+        return;
     }
 
+#if CONFIG_STROKE_ORDER_LOCAL
+    // Cancellation may happen while OpenAudioChannel blocks. Never let that
+    // continuation become an ordinary listen request or start the microphone.
+    if (expected_generation != 0 && (stroke_round_.HasCancelFence(expected_generation) ||
+                                     !stroke_round_.CanContinueOpen(expected_generation) ||
+                                     IsStrokeAbortPending(expected_generation))) {
+        AbandonCancelledStrokeListening(expected_generation);
+        return;
+    }
+    if (expected_generation == 0 &&
+        (!stroke_round_.CanContinueOpen(expected_generation) || stroke_round_.IsRoundActive())) {
+        if (protocol_->IsAudioChannelOpened()) {
+            protocol_->CloseAudioChannel();
+        }
+        DrainStreamingAudio();
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
+    if (opened_session_id.empty()) {
+        opened_session_id = protocol_->session_id();
+    }
+    if (!BindOpenedAudioChannel(expected_generation, opened_session_id)) {
+        ClearStrokeOpenAttempt(expected_generation);
+        if (protocol_->IsAudioChannelOpened()) {
+            stroke_round_.CloseCurrentChannel();
+            protocol_->CloseAudioChannel();
+        }
+        DrainStreamingAudio();
+        if (expected_generation != 0) {
+            AbortStrokeRound(expected_generation,
+                             stroke_voice_transport_available_.load(std::memory_order_acquire)
+                                 ? StrokeAbortReason::InvalidSessionIdentity
+                                 : StrokeAbortReason::MissingSessionIdentity);
+        } else {
+            SetDeviceState(kDeviceStateIdle);
+            Board::GetInstance().GetDisplay()->ShowNotification("Session identity unavailable");
+        }
+        return;
+    }
+#endif
+
+    active_listening_generation_ = expected_generation;
     SetListeningMode(mode);
 }
 
 void Application::HandleStartListeningEvent() {
+    uint64_t expected_generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(listening_request_mutex_);
+        if (!listening_request_pending_) {
+            return;
+        }
+        expected_generation = listening_request_generation_;
+        listening_request_pending_ = false;
+    }
+    HandleStartListeningRequest(expected_generation);
+}
+
+void Application::HandleStartListeningRequest(uint64_t expected_generation) {
     auto state = GetDeviceState();
 
     if (state == kDeviceStateActivating) {
@@ -779,21 +1571,67 @@ void Application::HandleStartListeningEvent() {
         return;
     }
 
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (expected_generation == 0) {
+        const uint64_t current = stroke_round_.CurrentGeneration();
+        if (current != 0) {
+            AbortStrokeRound(current, StrokeAbortReason::NewNormalSession);
+            state = GetDeviceState();
+        }
+    } else if (!stroke_round_.CanContinueOpen(expected_generation)) {
+        AbortStrokeRound(expected_generation, StrokeAbortReason::StartFailed);
+        return;
+    }
+#endif
+
+    const auto start_mode =
+        static_cast<ListeningMode>(ListeningModeForStartGeneration(expected_generation));
+
     if (state == kDeviceStateIdle) {
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
             // Schedule to let the state change be processed first (UI update)
-            Schedule([this]() { ContinueOpenAudioChannel(kListeningModeManualStop); });
+            if (expected_generation != 0) {
+#if CONFIG_STROKE_ORDER_LOCAL
+                stroke_round_.MarkConnecting(expected_generation);
+#endif
+            }
+            Schedule([this, start_mode, expected_generation]() {
+                ContinueOpenAudioChannel(start_mode, expected_generation);
+            });
             return;
         }
-        SetListeningMode(kListeningModeManualStop);
+#if CONFIG_STROKE_ORDER_LOCAL
+        if (expected_generation != 0) {
+            // A stroke round is never allowed to reuse a pre-existing channel.
+            AbortStrokeRound(expected_generation, StrokeAbortReason::StartFailed);
+            return;
+        }
+        if (!BindOpenedAudioChannel(0, protocol_->session_id())) {
+            stroke_round_.CloseCurrentChannel();
+            protocol_->CloseAudioChannel();
+            DrainStreamingAudio();
+            Board::GetInstance().GetDisplay()->ShowNotification("Session identity unavailable");
+            return;
+        }
+#endif
+        active_listening_generation_ = expected_generation;
+        SetListeningMode(start_mode);
     } else if (state == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonNone);
-        SetListeningMode(kListeningModeManualStop);
+        active_listening_generation_ = expected_generation;
+        SetListeningMode(start_mode);
     }
 }
 
 void Application::HandleStopListeningEvent() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+    if (stroke_generation != 0) {
+        AbortStrokeRound(stroke_generation, StrokeAbortReason::NewNormalSession);
+        return;
+    }
+#endif
     auto state = GetDeviceState();
 
     if (state == kDeviceStateAudioTesting) {
@@ -809,6 +1647,14 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::HandleWakeWordDetectedEvent() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+    if (stroke_generation != 0) {
+        AbortStrokeRound(stroke_generation, StrokeAbortReason::NewNormalSession);
+    } else if (StrokeOrderView::GetInstance().IsOverlayActive()) {
+        StrokeOrderView::GetInstance().AbortFromMain(0);
+    }
+#endif
     if (!protocol_) {
         return;
     }
@@ -826,7 +1672,11 @@ void Application::HandleWakeWordDetectedEvent() {
             ;
 
         if (state == kDeviceStateListening) {
-            protocol_->SendStartListening(GetDefaultListeningMode());
+            if (!protocol_->SendStartListening(GetDefaultListeningMode())) {
+                ESP_LOGW(TAG, "Failed to send wake-word re-listen start");
+                RecoverOrdinaryListeningStartFailure();
+                return;
+            }
             audio_service_.ResetDecoder();
             audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
             // Re-enable wake word detection as it was stopped by the detection itself
@@ -876,8 +1726,9 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 
+    std::string opened_session_id;
     if (!protocol_->IsAudioChannelOpened()) {
-        if (!protocol_->OpenAudioChannel()) {
+        if (!protocol_->OpenAudioChannel(&opened_session_id)) {
             // Return to idle so the device is not stuck in the connecting
             // state (not every failure path reports a network error), and
             // wake word detection is re-enabled by the idle state handler.
@@ -886,6 +1737,23 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
         }
     }
 
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (opened_session_id.empty()) {
+        opened_session_id = protocol_->session_id();
+    }
+    if (!BindOpenedAudioChannel(0, opened_session_id)) {
+        if (protocol_->IsAudioChannelOpened()) {
+            stroke_round_.CloseCurrentChannel();
+            protocol_->CloseAudioChannel();
+        }
+        DrainStreamingAudio();
+        SetDeviceState(kDeviceStateIdle);
+        Board::GetInstance().GetDisplay()->ShowNotification("Session identity unavailable");
+        return;
+    }
+#endif
+
+    active_listening_generation_ = 0;
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
 #if CONFIG_SEND_WAKE_WORD_DATA
     // Encode and send the wake word data to the server
@@ -975,9 +1843,126 @@ void Application::StartListeningAudio() {
         return;
     }
 
-    // Send the start listening command
-    protocol_->SendStartListening(listening_mode_);
-    audio_service_.EnableVoiceProcessing(true);
+    const uint64_t start_generation = active_listening_generation_;
+#if CONFIG_STROKE_ORDER_LOCAL
+    std::unique_lock<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
+    if (start_generation != 0 &&
+        (stroke_round_.HasCancelFence(start_generation) || IsStrokeAbortPending(start_generation) ||
+         !stroke_round_.CanStartListening(start_generation))) {
+        start_lock.unlock();
+        AbandonCancelledStrokeListening(start_generation);
+        return;
+    }
+    if (start_generation == 0 && !stroke_round_.CanStartListening(start_generation)) {
+        start_lock.unlock();
+        RecoverOrdinaryListeningStartFailure();
+        return;
+    }
+#endif
+
+    // Serialize the final gate with every asynchronous fence publisher. A
+    // synchronous SendText error may recursively publish a fence, so recheck
+    // before enabling capture as well. Do not mark listening or Speak before
+    // listen/start is actually sent and voice processing is observably running.
+    ListeningStartResult start_result;
+    start_result.send_start_succeeded = protocol_->SendStartListening(listening_mode_);
+    if (!start_result.send_start_succeeded) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        const bool fenced =
+            start_generation != 0 && (stroke_round_.HasCancelFence(start_generation) ||
+                                      IsStrokeAbortPending(start_generation));
+        const auto disposition =
+            EvaluateListeningStartResult(start_generation, fenced, start_result);
+        if (disposition == ListeningStartDisposition::AbandonFencedStroke) {
+            start_lock.unlock();
+            AbandonCancelledStrokeListening(start_generation);
+            return;
+        }
+        if (disposition == ListeningStartDisposition::AbortStroke) {
+            stroke_round_.PublishCancelFence(start_generation);
+            start_lock.unlock();
+            AbortStrokeRound(start_generation, StrokeAbortReason::StartFailed);
+            return;
+        }
+        start_lock.unlock();
+#else
+        (void)EvaluateListeningStartResult(start_generation, false, start_result);
+#endif
+        RecoverOrdinaryListeningStartFailure();
+        return;
+    }
+
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (start_generation != 0 && (stroke_round_.HasCancelFence(start_generation) ||
+                                  IsStrokeAbortPending(start_generation))) {
+        const auto disposition = EvaluateListeningStartResult(start_generation, true, start_result);
+        start_lock.unlock();
+        if (disposition == ListeningStartDisposition::AbandonFencedStroke) {
+            AbandonCancelledStrokeListening(start_generation);
+        }
+        return;
+    }
+#endif
+
+    start_result.voice_processing_enabled = audio_service_.EnableVoiceProcessing(true);
+    start_result.audio_processor_running = audio_service_.IsAudioProcessorRunning();
+#if CONFIG_STROKE_ORDER_LOCAL
+    const bool fenced_after_enable =
+        start_generation != 0 &&
+        (stroke_round_.HasCancelFence(start_generation) || IsStrokeAbortPending(start_generation));
+#else
+    const bool fenced_after_enable = false;
+#endif
+    const auto disposition =
+        EvaluateListeningStartResult(start_generation, fenced_after_enable, start_result);
+    if (disposition != ListeningStartDisposition::Proceed) {
+#if CONFIG_STROKE_ORDER_LOCAL
+        if (disposition == ListeningStartDisposition::AbandonFencedStroke) {
+            start_lock.unlock();
+            AbandonCancelledStrokeListening(start_generation);
+            return;
+        }
+        if (disposition == ListeningStartDisposition::AbortStroke) {
+            stroke_round_.PublishCancelFence(start_generation);
+            start_lock.unlock();
+            AbortStrokeRound(start_generation, StrokeAbortReason::StartFailed);
+            return;
+        }
+        start_lock.unlock();
+#endif
+        RecoverOrdinaryListeningStartFailure();
+        return;
+    }
+
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (!stroke_round_.MarkListeningStarted(start_generation,
+                                            static_cast<uint64_t>(esp_timer_get_time() / 1000))) {
+        if (start_generation != 0) {
+            const bool fenced = stroke_round_.HasCancelFence(start_generation) ||
+                                IsStrokeAbortPending(start_generation);
+            if (!fenced) {
+                stroke_round_.PublishCancelFence(start_generation);
+            }
+            start_lock.unlock();
+            if (fenced) {
+                AbandonCancelledStrokeListening(start_generation);
+            } else {
+                AbortStrokeRound(start_generation, StrokeAbortReason::StartFailed);
+            }
+            return;
+        }
+        start_lock.unlock();
+        RecoverOrdinaryListeningStartFailure();
+        return;
+    }
+    const uint64_t speak_generation = start_generation;
+    start_lock.unlock();
+    if (speak_generation != 0 &&
+        !StrokeOrderView::GetInstance().ShowListeningFromMain(speak_generation)) {
+        AbortStrokeRound(speak_generation, StrokeAbortReason::StartFailed);
+        return;
+    }
+#endif
 
     ConfigureWakeWordForListening();
 
@@ -1025,6 +2010,13 @@ ListeningMode Application::GetDefaultListeningMode() const {
 
 void Application::Reboot() {
     ESP_LOGI(TAG, "Rebooting...");
+#if CONFIG_STROKE_ORDER_LOCAL
+    const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+    if (stroke_generation != 0) {
+        AbortStrokeRound(stroke_generation, StrokeAbortReason::Reboot);
+    }
+    StrokeOrderView::GetInstance().Shutdown();
+#endif
     // Disconnect the audio channel
     if (protocol_ && protocol_->IsAudioChannelOpened()) {
         protocol_->CloseAudioChannel();
@@ -1037,6 +2029,12 @@ void Application::Reboot() {
 }
 
 bool Application::UpgradeFirmware(const std::string& url, const std::string& version) {
+#if CONFIG_STROKE_ORDER_LOCAL
+    const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+    if (stroke_generation != 0) {
+        AbortStrokeRound(stroke_generation, StrokeAbortReason::Reboot);
+    }
+#endif
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
 
@@ -1092,6 +2090,9 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
 }
 
 void Application::WakeWordInvoke(const std::string& wake_word) {
+#if CONFIG_STROKE_ORDER_LOCAL
+    PublishStrokeCancelFence(StrokeAbortReason::NewNormalSession);
+#endif
     if (!protocol_) {
         return;
     }
@@ -1121,6 +2122,12 @@ bool Application::CanEnterSleepMode() {
     if (GetDeviceState() != kDeviceStateIdle) {
         return false;
     }
+
+#if CONFIG_STROKE_ORDER_LOCAL
+    if (StrokeOrderView::GetInstance().IsOverlayActive()) {
+        return false;
+    }
+#endif
 
     if (protocol_ && protocol_->IsAudioChannelOpened()) {
         return false;
@@ -1180,7 +2187,16 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
 void Application::ResetProtocol() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    PublishStrokeCancelFence(StrokeAbortReason::ChannelClosed);
+#endif
     Schedule([this]() {
+#if CONFIG_STROKE_ORDER_LOCAL
+        const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+        if (stroke_generation != 0) {
+            AbortStrokeRound(stroke_generation, StrokeAbortReason::ChannelClosed);
+        }
+#endif
         // Close audio channel if opened
         if (protocol_ && protocol_->IsAudioChannelOpened()) {
             protocol_->CloseAudioChannel();

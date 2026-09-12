@@ -5,6 +5,9 @@
 #include "emote_display.h"
 #include "expression_emote.h"
 #include "lvgl_theme.h"
+#if CONFIG_STROKE_ORDER_LOCAL
+#include "stroke_order/stroke_order_view.h"
+#endif
 #if HAVE_LVGL
 #include <spi_flash_mmap.h>
 #include "display/lcd_display.h"
@@ -41,7 +44,7 @@ Assets::Assets() {
     InitializePartition();
 }
 
-Assets::~Assets() { UnApplyPartition(); }
+Assets::~Assets() { (void)UnApplyPartition(); }
 
 bool Assets::FindPartition(Assets* assets) {
     assets->partition_ = esp_partition_find_first(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY,
@@ -54,18 +57,33 @@ bool Assets::FindPartition(Assets* assets) {
 }
 
 bool Assets::Apply(bool refresh_display_theme) {
-    return strategy_ ? strategy_->Apply(this, refresh_display_theme) : false;
+    const bool applied = strategy_ ? strategy_->Apply(this, refresh_display_theme) : false;
+#if CONFIG_STROKE_ORDER_LOCAL
+    // Re-read and copy the file after every Apply attempt. A failed/missing new
+    // asset must never leave the old StrokeOrderController readiness in place.
+    StrokeOrderView::GetInstance().RebindAssets();
+#endif
+    return applied;
 }
 
 bool Assets::InitializePartition() {
     return strategy_ ? strategy_->InitializePartition(this) : false;
 }
 
-void Assets::UnApplyPartition() {
+bool Assets::UnApplyPartition() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    // Serialize with LVGL callbacks and invalidate the entry/controller before
+    // the strategy releases its mmap. Download must abort if this cannot be done.
+    if (!StrokeOrderView::GetInstance().SuspendAssets()) {
+        ESP_LOGE(TAG, "Refusing to unmap assets while StrokeOrderView is active");
+        return false;
+    }
+#endif
     UseBuiltInTextFontCapability();
     if (strategy_) {
         strategy_->UnApplyPartition(this);
     }
+    return true;
 }
 
 void Assets::UseBuiltInTextFontCapability() {
@@ -534,8 +552,10 @@ bool Assets::Download(std::string url,
         return false;
     }
 
-    // Unapply the partition
-    UnApplyPartition();
+    // Unapply the partition only after all mmap consumers have suspended.
+    if (!UnApplyPartition()) {
+        return false;
+    }
 
     size_t sectors_to_erase = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE;
     size_t total_erase_size = sectors_to_erase * SECTOR_SIZE;

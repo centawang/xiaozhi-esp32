@@ -8,9 +8,36 @@
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include "assets/lang_config.h"
 
 #define TAG "WS"
+
+namespace {
+
+struct WebsocketSessionIdentity {
+    bool Complete(const std::string& value) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (completed) {
+            return false;
+        }
+        session_id = value;
+        completed = true;
+        return true;
+    }
+
+    std::string Get() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return session_id;
+    }
+
+    mutable std::mutex mutex;
+    std::string session_id;
+    bool completed = false;
+};
+
+}  // namespace
 
 WebsocketProtocol::WebsocketProtocol() { event_group_handle_ = xEventGroupCreate(); }
 
@@ -76,7 +103,15 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     websocket_.reset();
 }
 
-bool WebsocketProtocol::OpenAudioChannel() {
+uint64_t WebsocketProtocol::ReserveAudioChannelOpenAttempt() {
+    uint64_t generation = channel_generation_.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    if (generation == 0) {
+        generation = channel_generation_.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    }
+    return generation;
+}
+
+bool WebsocketProtocol::OpenAudioChannel(std::string* opened_session_id, uint64_t open_attempt_id) {
     Settings settings("websocket", false);
     std::string url = settings.GetString("url");
     std::string token = settings.GetString("token");
@@ -86,6 +121,16 @@ bool WebsocketProtocol::OpenAudioChannel() {
     }
 
     error_occurred_ = false;
+    session_id_.clear();
+    xEventGroupClearBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
+    auto identity = std::make_shared<WebsocketSessionIdentity>();
+    const uint64_t generation =
+        open_attempt_id == 0 ? ReserveAudioChannelOpenAttempt() : open_attempt_id;
+    if (channel_generation_.load(std::memory_order_acquire) != generation) {
+        ESP_LOGW(TAG, "Rejecting stale websocket open attempt: %llu",
+                 static_cast<unsigned long long>(generation));
+        return false;
+    }
 
     auto network = Board::GetInstance().GetNetwork();
     websocket_ = network->CreateWebSocket(1);
@@ -105,7 +150,10 @@ bool WebsocketProtocol::OpenAudioChannel() {
     websocket_->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
     websocket_->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
 
-    websocket_->OnData([this](const char* data, size_t len, bool binary) {
+    websocket_->OnData([this, identity, generation](const char* data, size_t len, bool binary) {
+        if (channel_generation_.load(std::memory_order_acquire) != generation) {
+            return;
+        }
         if (binary) {
             if (on_incoming_audio_ != nullptr) {
                 if (version_ == 2) {
@@ -115,27 +163,33 @@ bool WebsocketProtocol::OpenAudioChannel() {
                     bp2->timestamp = ntohl(bp2->timestamp);
                     bp2->payload_size = ntohl(bp2->payload_size);
                     auto payload = (uint8_t*)bp2->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
+                    auto packet = std::make_unique<AudioStreamPacket>(AudioStreamPacket{
                         .sample_rate = server_sample_rate_,
                         .frame_duration = server_frame_duration_,
                         .timestamp = bp2->timestamp,
-                        .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)}));
+                        .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)});
+                    packet->session_id = identity->Get();
+                    on_incoming_audio_(std::move(packet));
                 } else if (version_ == 3) {
                     BinaryProtocol3* bp3 = (BinaryProtocol3*)data;
                     bp3->type = bp3->type;
                     bp3->payload_size = ntohs(bp3->payload_size);
                     auto payload = (uint8_t*)bp3->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
+                    auto packet = std::make_unique<AudioStreamPacket>(AudioStreamPacket{
                         .sample_rate = server_sample_rate_,
                         .frame_duration = server_frame_duration_,
                         .timestamp = 0,
-                        .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)}));
+                        .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)});
+                    packet->session_id = identity->Get();
+                    on_incoming_audio_(std::move(packet));
                 } else {
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
+                    auto packet = std::make_unique<AudioStreamPacket>(AudioStreamPacket{
                         .sample_rate = server_sample_rate_,
                         .frame_duration = server_frame_duration_,
                         .timestamp = 0,
-                        .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)}));
+                        .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)});
+                    packet->session_id = identity->Get();
+                    on_incoming_audio_(std::move(packet));
                 }
             }
         } else {
@@ -144,7 +198,16 @@ bool WebsocketProtocol::OpenAudioChannel() {
             auto type = cJSON_GetObjectItem(root, "type");
             if (cJSON_IsString(type)) {
                 if (strcmp(type->valuestring, "hello") == 0) {
-                    ParseServerHello(root);
+                    // Bind this socket callback to the identity carried by this
+                    // exact hello; never stamp it later from mutable protocol state.
+                    const cJSON* session_id = cJSON_GetObjectItem(root, "session_id");
+                    const std::string received_session_id =
+                        cJSON_IsString(session_id) && session_id->valuestring != nullptr
+                            ? session_id->valuestring
+                            : "";
+                    if (identity->Complete(received_session_id)) {
+                        ParseServerHello(root);
+                    }
                 } else {
                     if (on_incoming_json_ != nullptr) {
                         on_incoming_json_(root);
@@ -158,10 +221,16 @@ bool WebsocketProtocol::OpenAudioChannel() {
         last_incoming_time_ = std::chrono::steady_clock::now();
     });
 
-    websocket_->OnDisconnected([this]() {
+    websocket_->OnDisconnected([this, identity, generation]() {
+        if (channel_generation_.load(std::memory_order_acquire) != generation) {
+            return;
+        }
         ESP_LOGI(TAG, "Websocket disconnected");
         if (on_audio_channel_closed_ != nullptr) {
-            on_audio_channel_closed_();
+            on_audio_channel_closed_(AudioChannelCloseInfo{
+                .session_id = identity->Get(),
+                .open_attempt_id = generation,
+            });
         }
     });
 
@@ -188,6 +257,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
         return false;
     }
 
+    if (opened_session_id != nullptr) {
+        *opened_session_id = identity->Get();
+    }
     if (on_audio_channel_opened_ != nullptr) {
         on_audio_channel_opened_();
     }
@@ -223,8 +295,8 @@ std::string WebsocketProtocol::GetHelloMessage() {
 
 void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     auto transport = cJSON_GetObjectItem(root, "transport");
-    if (transport == nullptr || strcmp(transport->valuestring, "websocket") != 0) {
-        ESP_LOGE(TAG, "Unsupported transport: %s", transport->valuestring);
+    if (!cJSON_IsString(transport) || strcmp(transport->valuestring, "websocket") != 0) {
+        ESP_LOGE(TAG, "Unsupported or missing transport");
         return;
     }
 

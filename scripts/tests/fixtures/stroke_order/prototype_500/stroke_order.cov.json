@@ -1,0 +1,15 @@
+{
+  "character_count": 500,
+  "complete": true,
+  "error_count": 0,
+  "errors": [],
+  "not_a_release_library": true,
+  "not_official_certification": true,
+  "ok_count": 500,
+  "prototype": true,
+  "source": {
+    "checkout_clean": true,
+    "commit": "68d10a4b21150cae5e1ebbd223eed289cf32d90c",
+    "repo": "https://github.com/chanind/hanzi-writer-data.git"
+  }
+}

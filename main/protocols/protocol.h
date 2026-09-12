@@ -12,6 +12,16 @@ struct AudioStreamPacket {
     int frame_duration = 0;
     uint32_t timestamp = 0;
     std::vector<uint8_t> payload;
+    // Immutable identity of the transport channel that delivered this packet.
+    // Local sounds and device-originated packets leave this empty.
+    std::string session_id;
+};
+
+struct AudioChannelCloseInfo {
+    std::string session_id;
+    // Transport-owned identity of the exact open attempt. Zero means that the
+    // transport does not support correlated opens.
+    uint64_t open_attempt_id = 0;
 };
 
 struct BinaryProtocol2 {
@@ -49,18 +59,28 @@ public:
     void OnIncomingAudio(std::function<void(std::unique_ptr<AudioStreamPacket> packet)> callback);
     void OnIncomingJson(std::function<void(const cJSON* root)> callback);
     void OnAudioChannelOpened(std::function<void()> callback);
-    void OnAudioChannelClosed(std::function<void()> callback);
+    void OnAudioChannelClosed(std::function<void(const AudioChannelCloseInfo& info)> callback);
     void OnNetworkError(std::function<void(const std::string& message)> callback);
     void OnConnected(std::function<void()> callback);
     void OnDisconnected(std::function<void()> callback);
 
     virtual bool Start() = 0;
-    virtual bool OpenAudioChannel() = 0;
+    // A correlated transport may reserve an identity before a blocking open so
+    // an asynchronous close can be tied to that exact attempt. Zero means the
+    // transport cannot provide such an identity.
+    virtual uint64_t ReserveAudioChannelOpenAttempt() { return 0; }
+    // On success, session_id receives the identity from this exact hello.
+    virtual bool OpenAudioChannel(std::string* session_id = nullptr,
+                                  uint64_t open_attempt_id = 0) = 0;
     virtual void CloseAudioChannel(bool send_goodbye = true) = 0;
     virtual bool IsAudioChannelOpened() const = 0;
+    // True only when this transport can bind a hello to one specific open attempt.
+    virtual bool SupportsCorrelatedSessionOpen() const { return false; }
+    // True only when stroke voice may safely open a fresh listening channel.
+    virtual bool SupportsStrokeVoiceRouting() const { return false; }
     virtual bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) = 0;
     virtual void SendWakeWordDetected(const std::string& wake_word);
-    virtual void SendStartListening(ListeningMode mode);
+    virtual bool SendStartListening(ListeningMode mode);
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
@@ -69,7 +89,7 @@ protected:
     std::function<void(const cJSON* root)> on_incoming_json_;
     std::function<void(std::unique_ptr<AudioStreamPacket> packet)> on_incoming_audio_;
     std::function<void()> on_audio_channel_opened_;
-    std::function<void()> on_audio_channel_closed_;
+    std::function<void(const AudioChannelCloseInfo& info)> on_audio_channel_closed_;
     std::function<void(const std::string& message)> on_network_error_;
     std::function<void()> on_connected_;
     std::function<void()> on_disconnected_;

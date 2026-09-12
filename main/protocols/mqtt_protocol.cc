@@ -129,11 +129,13 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             auto session_id = cJSON_GetObjectItem(root, "session_id");
             ESP_LOGI(TAG, "Received goodbye message, session_id: %s",
                      cJSON_IsString(session_id) ? session_id->valuestring : "null");
-            if (cJSON_IsString(session_id) && session_id_ == session_id->valuestring) {
+            if (cJSON_IsString(session_id) && IsCurrentSessionId(session_id->valuestring)) {
                 auto alive = alive_;  // Capture alive flag
-                Application::GetInstance().Schedule([this, alive]() {
-                    if (*alive) {
-                        // Server initiated goodbye, don't send goodbye back to avoid ping-pong
+                const std::string closing_session_id = session_id->valuestring;
+                Application::GetInstance().Schedule([this, alive, closing_session_id]() {
+                    if (*alive && IsCurrentSessionId(closing_session_id)) {
+                        // Server initiated goodbye, don't send goodbye back to avoid ping-pong.
+                        // A delayed goodbye must not close a newer channel.
                         CloseAudioChannel(false);
                     }
                 });
@@ -212,6 +214,11 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
 }
 
 void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
+    std::string closed_session_id;
+    {
+        std::lock_guard<std::mutex> lock(hello_mutex_);
+        closed_session_id = session_id_;
+    }
     std::unique_ptr<Udp> udp;
     {
         std::lock_guard<std::mutex> lock(channel_mutex_);
@@ -225,18 +232,24 @@ void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
     // Don't send if server already sent goodbye (to avoid ping-pong)
     if (send_goodbye) {
         std::string message = "{";
-        message += "\"session_id\":\"" + session_id_ + "\",";
+        message += "\"session_id\":\"" + closed_session_id + "\",";
         message += "\"type\":\"goodbye\"";
         message += "}";
         SendText(message);
     }
 
     if (on_audio_channel_closed_ != nullptr) {
-        on_audio_channel_closed_();
+        on_audio_channel_closed_(AudioChannelCloseInfo{
+            .session_id = closed_session_id,
+            .open_attempt_id = 0,
+        });
     }
 }
 
-bool MqttProtocol::OpenAudioChannel() {
+bool MqttProtocol::OpenAudioChannel(std::string* opened_session_id, uint64_t open_attempt_id) {
+    // MQTT/UDP intentionally does not manufacture an open-attempt nonce. Its
+    // stroke voice capability remains disabled; ordinary chat uses session_id.
+    (void)open_attempt_id;
     if (mqtt_ == nullptr || !mqtt_->IsConnected()) {
         ESP_LOGI(TAG, "MQTT is not connected, try to connect now");
         if (!StartMqttClient(true)) {
@@ -245,11 +258,18 @@ bool MqttProtocol::OpenAudioChannel() {
     }
 
     error_occurred_ = false;
-    session_id_ = "";
+    {
+        std::lock_guard<std::mutex> lock(hello_mutex_);
+        session_id_.clear();
+        opened_session_id_.clear();
+        waiting_for_server_hello_ = true;
+    }
     xEventGroupClearBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT);
 
     auto message = GetHelloMessage();
     if (!SendText(message)) {
+        std::lock_guard<std::mutex> lock(hello_mutex_);
+        waiting_for_server_hello_ = false;
         return false;
     }
 
@@ -257,14 +277,23 @@ bool MqttProtocol::OpenAudioChannel() {
     EventBits_t bits = xEventGroupWaitBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT,
                                            pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
     if (!(bits & MQTT_PROTOCOL_SERVER_HELLO_EVENT)) {
+        {
+            std::lock_guard<std::mutex> lock(hello_mutex_);
+            waiting_for_server_hello_ = false;
+        }
         ESP_LOGE(TAG, "Failed to receive server hello");
         SetError(Lang::Strings::SERVER_TIMEOUT);
         return false;
     }
 
+    std::string channel_session_id;
+    {
+        std::lock_guard<std::mutex> lock(hello_mutex_);
+        channel_session_id = opened_session_id_;
+    }
     auto network = Board::GetInstance().GetNetwork();
     auto udp = network->CreateUdp(2);
-    udp->OnMessage([this](const std::string& data) {
+    udp->OnMessage([this, channel_session_id](const std::string& data) {
         /*
          * UDP Encrypted OPUS Packet Format:
          * |type 1u|flags 1u|payload_len 2u|ssrc 4u|timestamp 4u|sequence 4u|
@@ -314,6 +343,7 @@ bool MqttProtocol::OpenAudioChannel() {
         packet->sample_rate = server_sample_rate_;
         packet->frame_duration = server_frame_duration_;
         packet->timestamp = timestamp;
+        packet->session_id = channel_session_id;
         packet->payload.resize(decrypted_size);
         if (!CryptAesCtr(encrypted, decrypted_size, nonce,
                          reinterpret_cast<uint8_t*>(packet->payload.data()))) {
@@ -342,6 +372,9 @@ bool MqttProtocol::OpenAudioChannel() {
         udp_ = std::move(udp);
     }
 
+    if (opened_session_id != nullptr) {
+        *opened_session_id = channel_session_id;
+    }
     if (on_audio_channel_opened_ != nullptr) {
         on_audio_channel_opened_();
     }
@@ -375,6 +408,12 @@ std::string MqttProtocol::GetHelloMessage() {
 }
 
 void MqttProtocol::ParseServerHello(const cJSON* root) {
+    std::unique_lock<std::mutex> hello_lock(hello_mutex_);
+    if (!waiting_for_server_hello_) {
+        ESP_LOGW(TAG, "Ignoring server hello with no pending channel open");
+        return;
+    }
+
     auto transport = cJSON_GetObjectItem(root, "transport");
     if (!cJSON_IsString(transport) || strcmp(transport->valuestring, "udp") != 0) {
         ESP_LOGE(TAG, "Unsupported or missing transport");
@@ -382,10 +421,9 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
     }
 
     auto session_id = cJSON_GetObjectItem(root, "session_id");
-    if (cJSON_IsString(session_id)) {
-        session_id_ = session_id->valuestring;
-        ESP_LOGI(TAG, "Session ID: %s", session_id_.c_str());
-    }
+    const std::string received_session_id =
+        cJSON_IsString(session_id) && session_id->valuestring != nullptr ? session_id->valuestring
+                                                                         : "";
 
     // Get sample rate from hello message
     auto audio_params = cJSON_GetObjectItem(root, "audio_params");
@@ -463,7 +501,17 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
         local_sequence_ = 0;
         remote_sequence_ = 0;
     }
+    session_id_ = received_session_id;
+    opened_session_id_ = received_session_id;
+    waiting_for_server_hello_ = false;
+    ESP_LOGI(TAG, "Session ID: %s", session_id_.c_str());
+    hello_lock.unlock();
     xEventGroupSetBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT);
+}
+
+bool MqttProtocol::IsCurrentSessionId(const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(hello_mutex_);
+    return session_id_ == session_id;
 }
 
 bool MqttProtocol::CryptAesCtr(const uint8_t* input, size_t input_size, const uint8_t* nonce,

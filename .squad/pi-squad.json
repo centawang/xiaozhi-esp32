@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "name": "Squad",
+  "project": "单片机设备开发",
+  "members": [
+    {
+      "id": "lead",
+      "name": "Lead",
+      "role": "Architecture and coordination",
+      "expertise": [
+        "architecture",
+        "design",
+        "架构",
+        "设计",
+        "PRD"
+      ],
+      "canWrite": true,
+      "reviewer": true,
+      "model": "gpt-5.6-sol:xhigh"
+    },
+    {
+      "id": "frontend",
+      "name": "Frontend",
+      "role": "Frontend engineer",
+      "expertise": [
+        "React",
+        "UI",
+        "CSS",
+        "前端",
+        "页面"
+      ],
+      "canWrite": true,
+      "reviewer": false,
+      "model": "grok-4.6:high"
+    },
+    {
+      "id": "backend",
+      "name": "Backend",
+      "role": "Backend engineer",
+      "expertise": [
+        "API",
+        "database",
+        "server",
+        "后端",
+        "数据库"
+      ],
+      "canWrite": true,
+      "reviewer": false,
+      "model": "grok-4.6:high"
+    },
+    {
+      "id": "tester",
+      "name": "Tester",
+      "role": "Test engineer and reviewer",
+      "expertise": [
+        "test",
+        "review",
+        "QA",
+        "测试",
+        "审查"
+      ],
+      "canWrite": true,
+      "reviewer": true,
+      "model": "gpt-5.6-sol:xhigh"
+    },
+    {
+      "id": "scribe",
+      "name": "Scribe",
+      "role": "Knowledge curator",
+      "expertise": [
+        "memory",
+        "decisions",
+        "retro",
+        "记忆",
+        "复盘"
+      ],
+      "canWrite": false,
+      "reviewer": false
+    },
+    {
+      "id": "ralph",
+      "name": "Ralph",
+      "role": "Backlog triage advisor",
+      "expertise": [
+        "issue",
+        "backlog",
+        "triage",
+        "待办"
+      ],
+      "canWrite": false,
+      "reviewer": false
+    },
+    {
+      "id": "rai",
+      "name": "Rai",
+      "role": "Safety and privacy reviewer",
+      "expertise": [
+        "security",
+        "privacy",
+        "safety",
+        "安全",
+        "隐私"
+      ],
+      "canWrite": false,
+      "reviewer": true
+    }
+  ]
+}

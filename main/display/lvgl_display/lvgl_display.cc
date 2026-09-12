@@ -14,6 +14,9 @@
 #include "lvgl_display.h"
 #include "lvgl_theme.h"
 #include "settings.h"
+#if CONFIG_STROKE_ORDER_LOCAL
+#include "stroke_order/stroke_order_view.h"
+#endif
 
 #define TAG "Display"
 
@@ -303,6 +306,9 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
 void LvglDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {}
 
 void LvglDisplay::SetPowerSaveMode(bool on) {
+#if CONFIG_STROKE_ORDER_LOCAL
+    StrokeOrderView::GetInstance().OnPowerSave(on);
+#endif
     if (on) {
         SetChatMessage("system", "");
         SetEmotion("sleepy");

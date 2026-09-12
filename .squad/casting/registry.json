@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "universe": "descriptive",
+  "members": [
+    {
+      "id": "lead",
+      "name": "Lead"
+    },
+    {
+      "id": "frontend",
+      "name": "Frontend"
+    },
+    {
+      "id": "backend",
+      "name": "Backend"
+    },
+    {
+      "id": "tester",
+      "name": "Tester"
+    },
+    {
+      "id": "scribe",
+      "name": "Scribe"
+    },
+    {
+      "id": "ralph",
+      "name": "Ralph"
+    },
+    {
+      "id": "rai",
+      "name": "Rai"
+    }
+  ]
+}

@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -67,15 +68,28 @@ protected:
 
 class DisplayLockGuard {
 public:
-    DisplayLockGuard(Display* display) : display_(display) {
-        if (!display_->Lock(30000)) {
-            ESP_LOGE("Display", "Failed to lock display");
+    explicit DisplayLockGuard(Display* display)
+        : display_(display), acquired_(display_ != nullptr && display_->Lock(30000)) {
+        if (!acquired_) {
+            ESP_LOGE("Display", "Failed to lock display; refusing unlocked UI access");
+            std::abort();
         }
     }
-    ~DisplayLockGuard() { display_->Unlock(); }
+    ~DisplayLockGuard() {
+        if (acquired_) {
+            display_->Unlock();
+        }
+    }
+
+    DisplayLockGuard(const DisplayLockGuard&) = delete;
+    DisplayLockGuard& operator=(const DisplayLockGuard&) = delete;
+
+    explicit operator bool() const { return acquired_; }
+    bool owns_lock() const { return acquired_; }
 
 private:
     Display* display_;
+    bool acquired_;
 };
 
 class NoDisplay : public Display {

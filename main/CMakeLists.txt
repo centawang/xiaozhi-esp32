@@ -1038,6 +1038,68 @@ if(CONFIG_IDF_TARGET_ESP32S3)
     list(APPEND SOURCES "boards/common/esp32_camera.cc")
 endif()
 
+# Optional local stroke-order parser and CoreS3 overlay (default off).
+if(CONFIG_STROKE_ORDER_LOCAL)
+    list(APPEND SOURCES
+        "stroke_order/stroke_order_store.cc"
+        "stroke_order/stroke_order_controller.cc"
+        "stroke_order/stroke_order_pinyin.cc"
+        "stroke_order/stroke_round_coordinator.cc"
+        "stroke_order/stroke_order_view.cc"
+    )
+    set(STROKE_ORDER_ASSETS_DIR "${CMAKE_BINARY_DIR}/stroke_order_assets")
+    set(STROKE_ORDER_PROTOTYPE_DIR "${PROJECT_DIR}/scripts/tests/fixtures/stroke_order/prototype_500")
+    set(STROKE_ORDER_BIN "${STROKE_ORDER_ASSETS_DIR}/stroke_order.bin")
+    set(STROKE_ORDER_PINYIN "${STROKE_ORDER_ASSETS_DIR}/stroke_pinyin.bin")
+    set(STROKE_ORDER_MANIFEST "${STROKE_ORDER_ASSETS_DIR}/stroke_order.manifest.json")
+    set(STROKE_ORDER_PINYIN_MANIFEST "${STROKE_ORDER_ASSETS_DIR}/stroke_pinyin.manifest.json")
+    set(STROKE_ORDER_LICENSE "${STROKE_ORDER_ASSETS_DIR}/ARPHICPL.TXT")
+    set(STROKE_ORDER_UNICODE_LICENSE "${STROKE_ORDER_ASSETS_DIR}/UNICODE-LICENSE.txt")
+    set(STROKE_ORDER_NOTICE "${STROKE_ORDER_ASSETS_DIR}/NOTICE.md")
+    set(STROKE_ORDER_ASSET_OUTPUTS
+        "${STROKE_ORDER_BIN}"
+        "${STROKE_ORDER_PINYIN}"
+        "${STROKE_ORDER_MANIFEST}"
+        "${STROKE_ORDER_PINYIN_MANIFEST}"
+        "${STROKE_ORDER_LICENSE}"
+        "${STROKE_ORDER_UNICODE_LICENSE}"
+        "${STROKE_ORDER_NOTICE}"
+        "${STROKE_ORDER_ASSETS_DIR}/stroke_order.src.json"
+        "${STROKE_ORDER_ASSETS_DIR}/stroke_pinyin.src.json"
+        "${STROKE_ORDER_ASSETS_DIR}/stroke_order.cov.json"
+        "${STROKE_ORDER_ASSETS_DIR}/stroke_pinyin.cov.json"
+        "${STROKE_ORDER_ASSETS_DIR}/selection-500.csv"
+        "${STROKE_ORDER_ASSETS_DIR}/charset-500.txt"
+        "${STROKE_ORDER_ASSETS_DIR}/SHA256SUMS"
+    )
+    add_custom_command(
+        OUTPUT ${STROKE_ORDER_ASSET_OUTPUTS}
+        COMMAND python "${PROJECT_DIR}/scripts/package_stroke_order_prototype.py"
+                --source-dir "${STROKE_ORDER_PROTOTYPE_DIR}"
+                --output-dir "${STROKE_ORDER_ASSETS_DIR}"
+        DEPENDS
+            "${PROJECT_DIR}/scripts/package_stroke_order_prototype.py"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/SHA256SUMS"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.sob1"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.spy1"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.manifest.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.manifest.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.src.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.src.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.cov.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.cov.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/selection-500.csv"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/charset-500.txt"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/ARPHICPL.TXT"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/UNICODE-LICENSE.txt"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/NOTICE.md"
+        COMMENT "Packaging reviewed 500-character stroke-order prototype (not a release library)"
+        VERBATIM
+    )
+    set(DEFAULT_ASSETS_EXTRA_FILES "${STROKE_ORDER_ASSETS_DIR}")
+    set(DEFAULT_ASSETS_EXTRA_FILES_DEPENDENCIES ${STROKE_ORDER_ASSET_OUTPUTS})
+endif()
+
 set(MAIN_PRIV_REQUIRES_EXTRA "")
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
@@ -1276,6 +1338,9 @@ function(build_default_assets_bin)
     # Add default assets extra files if defined
     if(DEFAULT_ASSETS_EXTRA_FILES)
         list(APPEND BUILD_ARGS "--extra_files" "${DEFAULT_ASSETS_EXTRA_FILES}")
+        if(DEFAULT_ASSETS_EXTRA_FILES_DEPENDENCIES)
+            list(APPEND DEFAULT_ASSETS_DEPENDENCIES ${DEFAULT_ASSETS_EXTRA_FILES_DEPENDENCIES})
+        endif()
     endif()
 
     list(APPEND BUILD_ARGS "--esp_sr_model_path" "${ESP_SR_MODEL_PATH}")

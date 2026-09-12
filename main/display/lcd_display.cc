@@ -3,6 +3,9 @@
 #include "gif/lvgl_gif.h"
 #include "lvgl_theme.h"
 #include "settings.h"
+#if CONFIG_STROKE_ORDER_LOCAL
+#include "stroke_order/stroke_order_view.h"
+#endif
 
 #include <esp_err.h>
 #include <esp_log.h>
@@ -290,6 +293,9 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 }
 
 LcdDisplay::~LcdDisplay() {
+#if CONFIG_STROKE_ORDER_LOCAL
+    StrokeOrderView::GetInstance().Shutdown();
+#endif
     SetPreviewImage(nullptr);
 
     // Clean up GIF controller
