@@ -21,6 +21,21 @@ void Expect(bool condition, const char* message) {
     }
 }
 
+void AdvanceVisible(StrokeOrderController& controller, uint32_t elapsed_ms) {
+    while (elapsed_ms != 0) {
+        const uint32_t step = elapsed_ms > StrokeOrderController::kTimerPeriodMs
+                                  ? StrokeOrderController::kTimerPeriodMs
+                                  : elapsed_ms;
+        const auto before = controller.completed_stroke_count();
+        const auto index = controller.current_stroke();
+        controller.Tick(step);
+        Expect(controller.completed_stroke_count() <= before + 1u,
+               "one visible settlement completes at most one stroke");
+        Expect(controller.current_stroke() <= index + 1u, "one settlement cannot skip an index");
+        elapsed_ms -= step;
+    }
+}
+
 std::vector<uint8_t> ReadBinary(const std::string& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) {
@@ -67,6 +82,9 @@ int main(int argc, char** argv) {
     Expect(StrokeOrderLayout::EntryRect(&x, &y, &w, &h) && w >= 44 && h >= 44,
            "entry touch target");
     Expect(StrokeOrderLayout::TianRect(&x, &y, &w, &h) && w == 200 && h == 200, "tian 200x200");
+
+    Expect(StrokeOrderController::kStartCueDurationMs == 150,
+           "all glyphs use 150 ms credited start-cue time");
 
     StrokeOrderController controller;
     auto mmap_blob = blob;
@@ -125,22 +143,29 @@ int main(int argc, char** argv) {
     const int32_t ady = dy < 0 ? -dy : dy;
     Expect(ady < dx, "一 is more horizontal than vertical");
 
-    Expect(controller.Pause(), "pause");
+    Expect(controller.Pause(), "pause is accepted while animating");
     Expect(controller.state() == StrokeOrderUiState::Paused, "paused");
     Expect(controller.Pause(), "pause idempotent");
-    Expect(controller.Resume(), "resume");
+    Expect(controller.Resume(), "continue is accepted while paused");
     Expect(controller.state() == StrokeOrderUiState::Animating, "animating after resume");
     Expect(controller.Resume(), "resume idempotent");
 
-    for (int i = 0; i < 80; ++i) {
-        controller.Tick(StrokeOrderController::kTickMs);
-    }
-    Expect(controller.state() == StrokeOrderUiState::Completed, "一 completes");
-    Expect(controller.Replay(), "replay");
+    controller.Tick(333);
+    Expect(controller.Replay(), "replay is accepted while animating");
     Expect(controller.state() == StrokeOrderUiState::Animating, "replay animates");
-    Expect(controller.current_stroke() == 0, "replay resets stroke");
+    Expect(controller.current_stroke() == 0 && controller.current_progress_permille() == 0,
+           "replay resets stroke progress");
+    AdvanceVisible(controller, StrokeOrderController::kStartCueDurationMs - 1);
+    Expect(controller.state() == StrokeOrderUiState::Animating &&
+               controller.current_progress_permille() == 993,
+           "short stroke is not fully drawn before 150 ms credited cue time");
+    controller.Tick(1);
+    Expect(controller.state() == StrokeOrderUiState::Completed &&
+               controller.current_progress_permille() == 1000,
+           "short stroke is fully drawn at 150 ms credited cue time");
+    Expect(controller.Replay(), "replay after timed completion");
 
-    Expect(controller.StepForward(1000), "step");
+    Expect(controller.StepForward(1000), "step is accepted while animating");
     Expect(controller.state() == StrokeOrderUiState::Completed, "step finishes 一");
     Expect(!controller.StepForward(1001), "step ignored when completed");
     Expect(controller.Replay(), "replay after complete");
@@ -148,7 +173,8 @@ int main(int argc, char** argv) {
     Expect(!controller.StepForward(4000), "completed state rejects repeated step");
     Expect(controller.state() == StrokeOrderUiState::Completed, "一 step still complete");
 
-    Expect(controller.BackToCandidates(), "back to candidates");
+    Expect(controller.Replay(), "replay 一 before animated back");
+    Expect(controller.BackToCandidates(), "back is accepted while animating");
     Expect(controller.state() == StrokeOrderUiState::Candidates, "candidates after back");
     Expect(controller.SelectCandidate(1), "select 人");
     Expect(controller.stroke_count() == 2, "人 has two strokes");
@@ -157,16 +183,84 @@ int main(int argc, char** argv) {
     Expect(dx < 0 && dy > 0, "人 first stroke down-left in y-down");
     Expect(MedianDelta(copied[1], &dx, &dy), "人 stroke 1");
     Expect(dx > 0 && dy > 0, "人 second stroke down-right in y-down");
+    AdvanceVisible(controller, StrokeOrderController::kStartCueDurationMs - 1);
+    Expect(controller.state() == StrokeOrderUiState::Animating && !controller.in_gap() &&
+               controller.current_progress_permille() == 993,
+           "longer path also keeps only its start cue through 149 ms");
+    controller.Tick(1);
+    Expect(controller.state() == StrokeOrderUiState::Animating && controller.in_gap() &&
+               controller.current_progress_permille() == 1000,
+           "longer path also finishes its first cue at 150 ms");
+    AdvanceVisible(controller, StrokeOrderController::kGapMs - 1);
+    Expect(controller.in_gap() && controller.current_stroke() == 0,
+           "inter-stroke gap remains separate from reveal duration");
+    controller.Tick(1);
+    Expect(!controller.in_gap() && controller.current_stroke() == 1 &&
+               controller.current_progress_permille() == 0,
+           "next stroke starts only after the separate gap");
+    for (uint32_t delta : {160u, 1160u, 1260u, 2320u, 5000u, UINT32_MAX}) {
+        Expect(controller.Replay(), "replay before public oversized Tick");
+        controller.Tick(delta);
+        Expect(controller.state() == StrokeOrderUiState::Animating && controller.in_gap() &&
+                   controller.current_stroke() == 0 && controller.completed_stroke_count() == 1 &&
+                   controller.current_progress_permille() == 1000,
+               "large public Tick snaps only the current stroke, never catches up");
+        controller.Tick(33);
+        controller.Tick(0);
+        controller.Tick(126);
+        Expect(controller.in_gap() && controller.current_stroke() == 0,
+               "159ms gap after huge cue settlement proves surplus was discarded");
+        controller.Tick(1);
+        Expect(!controller.in_gap() && controller.current_stroke() == 1 &&
+                   controller.current_progress_permille() == 0,
+               "exact 160ms gap enters the next cue at zero");
+    }
+    Expect(controller.Replay(), "replay before adjacent boundary checks");
+    AdvanceVisible(controller, 149);
+    controller.Tick(UINT32_MAX);
+    Expect(controller.in_gap() && controller.current_stroke() == 0,
+           "near cue boundary huge delta enters gap only, discards surplus");
+    controller.Tick(0);
+    controller.Tick(159);
+    Expect(controller.in_gap() && controller.current_stroke() == 0, "all of gap survives");
+    controller.Tick(UINT32_MAX);
+    Expect(!controller.in_gap() && controller.current_stroke() == 1 &&
+               controller.current_progress_permille() == 0,
+           "gap boundary discards overflow and presents the next start cue");
+    Expect(controller.Pause(), "pause after bounded tick");
+    controller.Tick(5000);
+    Expect(controller.state() == StrokeOrderUiState::Paused && controller.current_stroke() == 1 &&
+               controller.current_progress_permille() == 0,
+           "paused Tick is a no-op");
+    Expect(controller.Resume(), "resume after paused Tick no-op");
+    controller.Tick(100);
+    Expect(controller.state() == StrokeOrderUiState::Animating &&
+               controller.current_progress_permille() == 666,
+           "resume credits real 100ms, not accumulated wall time");
+    Expect(controller.Replay(), "replay 人 before step tests");
     Expect(controller.StepForward(0), "人 step first stroke at monotonic zero");
-    Expect(controller.state() == StrokeOrderUiState::Paused, "人 paused after step");
+    Expect(controller.state() == StrokeOrderUiState::Paused && controller.current_stroke() == 0 &&
+               controller.completed_stroke_count() == 1 && controller.in_gap() &&
+               controller.current_progress_permille() == 1000,
+           "cue-Step keeps same full stroke and gap for a separate redraw");
     Expect(!controller.StepForward(0), "zero timestamp still debounces");
     Expect(!controller.StepForward(StrokeOrderController::kStepDebounceMs - 1),
            "paused step remains debounced before threshold");
     Expect(controller.StepForward(StrokeOrderController::kStepDebounceMs + 1),
            "paused step works after real monotonic wait");
-    Expect(controller.state() == StrokeOrderUiState::Completed, "人 completed by steps");
+    Expect(controller.state() == StrokeOrderUiState::Paused && controller.current_stroke() == 1 &&
+               controller.completed_stroke_count() == 1 && !controller.in_gap() &&
+               controller.current_progress_permille() == 0,
+           "gap-Step presents next cue, never completes that stroke");
+    Expect(controller.StepForward(2 * StrokeOrderController::kStepDebounceMs + 1),
+           "next cue accepts a separate Step");
+    Expect(controller.state() == StrokeOrderUiState::Completed && !controller.in_gap() &&
+               controller.current_stroke() == 1 && controller.completed_stroke_count() == 2 &&
+               controller.current_progress_permille() == 1000,
+           "final cue-Step completes 人 with no final gap");
 
-    Expect(controller.Exit(), "exit");
+    Expect(controller.Replay(), "replay 人 before animated exit");
+    Expect(controller.Exit(), "exit is accepted while animating");
     Expect(controller.state() == StrokeOrderUiState::Hidden, "hidden after exit");
     Expect(controller.Exit(), "exit idempotent");
     Expect(!controller.IsExclusiveTouch(), "exit releases exclusive touch");
@@ -181,6 +275,54 @@ int main(int argc, char** argv) {
     Expect(controller.OpenCandidates(), "reopen");
     Expect(controller.SelectCandidate(2), "select 口");
     Expect(controller.stroke_count() == 3, "口 has three strokes");
+    AdvanceVisible(controller, 660);
+    Expect(controller.state() == StrokeOrderUiState::Animating && !controller.in_gap() &&
+               controller.current_stroke() == 2 && controller.current_progress_permille() == 0,
+           "repeated visible ticks consume two reveals and two gaps");
+    AdvanceVisible(controller, 149);
+    Expect(controller.state() == StrokeOrderUiState::Animating &&
+               controller.current_progress_permille() == 993,
+           "final stroke remains partial until 150ms credited");
+    controller.Tick(4000);
+    Expect(controller.state() == StrokeOrderUiState::Completed &&
+               controller.current_progress_permille() == 1000 && !controller.in_gap() &&
+               controller.current_stroke() == 2,
+           "only a final partial stroke can complete the glyph on an oversized tick");
+    controller.Tick(500);
+    Expect(controller.state() == StrokeOrderUiState::Completed &&
+               controller.current_progress_permille() == 1000,
+           "completed Tick is a no-op");
+    Expect(controller.Replay(), "replay 口 before repeated huge dt");
+    bool cue[3] = {true};
+    bool gap[3] = {};
+    unsigned updates = 0;
+    while (controller.state() == StrokeOrderUiState::Animating && updates < 10) {
+        const auto before = controller.completed_stroke_count();
+        const auto index = controller.current_stroke();
+        const auto phase = 2u * index + (controller.in_gap() ? 1u : 0u);
+        controller.Tick(UINT32_MAX);
+        const auto done = controller.completed_stroke_count();
+        const bool finished = controller.state() == StrokeOrderUiState::Completed;
+        const auto after_phase =
+            2u * controller.current_stroke() + (controller.in_gap() || finished ? 1u : 0u);
+        Expect(done <= before + 1u && controller.current_stroke() <= index + 1u,
+               "repeated huge public ticks never skip strokes");
+        Expect(after_phase == phase + 1, "one and only one boundary per huge Tick");
+        if (done > before) {
+            Expect(cue[before], "automatic completion requires an earlier start-cue snapshot");
+        }
+        if (controller.in_gap())
+            gap[controller.current_stroke()] = true;
+        if (controller.current_stroke() > index) {
+            Expect(gap[index], "every non-final automatic stroke has a gap snapshot");
+            Expect(controller.current_progress_permille() == 0 && !controller.in_gap(),
+                   "every new cue starts at zero elapsed, no gap overflow");
+            cue[controller.current_stroke()] = true;
+        }
+        ++updates;
+    }
+    Expect(controller.state() == StrokeOrderUiState::Completed && updates == 5,
+           "three strokes require five separate cue/gap settlements even with huge deltas");
     Expect(controller.CopyLoadedGlyph(&copied) && copied.size() == 3, "copy 口 glyph");
     const uint16_t first_median = static_cast<uint16_t>(copied[0].median.size());
     StrokeOrderLifecycle asset_lifecycle;

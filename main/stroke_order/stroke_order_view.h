@@ -6,6 +6,7 @@
 #include "stroke_order/stroke_order_lifecycle.h"
 #include "stroke_order/stroke_order_pinyin.h"
 #include "stroke_order/stroke_order_session.h"
+#include "stroke_order/stroke_order_ui_action.h"
 #include "stroke_order/stroke_round_coordinator.h"
 
 #include <atomic>
@@ -92,7 +93,7 @@ private:
     void RequestAbortLocked(StrokeAbortReason reason);
     bool EnsureOverlay();
     void DestroyOverlay();
-    void StopAnimTimer();
+    void StopAnimTimer(bool reset_clock = true);
     bool SyncAnimTimer();
     static uint8_t ClassifyDeviceState(DeviceState state);
     bool RenderCandidates();
@@ -101,7 +102,6 @@ private:
     bool RenderConnecting();
     bool RenderAwaitingSpeech();
     bool RenderNoMatch();
-    bool RenderTimedOut();
     bool RenderStatusPage(const char* title, bool show_retry);
     bool ApplyVoiceUtteranceLocked(uint64_t generation, const std::string& text);
     bool CacheLoadedGlyph();
@@ -111,13 +111,11 @@ private:
                            lv_color_t color, int width);
     void DrawStrokeOutline(lv_layer_t* layer, const CachedStroke& stroke, int x, int y, int size,
                            lv_color_t color, int width);
-    void DrawMedianReveal(lv_layer_t* layer, const CachedStroke& stroke, int x, int y, int size,
-                          uint32_t permille, lv_color_t color, int width);
     void DrawStartMarker(lv_layer_t* layer, const CachedStroke& stroke, int x, int y, int size,
                          lv_color_t color);
     void RedrawCanvas();
     void UpdateControlLabels();
-    void HandleControlLocked(uint32_t index);
+    bool HandleControlLocked(uint32_t index);
     void HandleStatePresentationLocked();
 
     Display* display_ = nullptr;
@@ -131,6 +129,7 @@ private:
     uint32_t control_ids_[StrokeOrderLayout::kControlCount] = {};
     lv_draw_buf_t* canvas_buf_ = nullptr;
     lv_timer_t* anim_timer_ = nullptr;
+    StrokeOrderAnimationClock anim_clock_;
     std::vector<CachedGlyph> candidate_glyphs_;
     CachedGlyph current_glyph_;
     StrokeOrderLifecycle lifecycle_;

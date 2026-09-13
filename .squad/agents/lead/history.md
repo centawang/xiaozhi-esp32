@@ -726,3 +726,18 @@ plain `new[]` 是否确实落到外部 RAM 必须真机用 heap caps/指针属�
 - Runtime stroke package 恰含 15 个文件：8 shards、catalog、pinyin、runtime manifest、APL、Unicode license、NOTICE、闭合 SHA256SUMS；selection/charset/coverage/source/per-shard manifests 不进入 runtime pack。
 - ESP-IDF 6.0.2 外部 clean build 的完整 generated assets 为 7,568,207 B，8 MiB assets 分区余量 820,401 B；最终 image 内 15 个 stroke 文件的 size/hash 与 runtime package 一致。
 - 当前工作树同时存在用户的 Stick-S3、emoji、`.squad` 和 8m partition 工作；本任务没有回滚或清理这些内容，并保留了共享 CMake/build_default_assets 中的既有 local emoji hunk。
+
+<!-- pi-squad:1a48c68b98e64c4424ca6dbe8a11e30b752d47eb6ec34667309eb1732edfecdb -->
+## 2026-09-13T00:26:56.633Z — stroke-interaction-improvements
+
+Implemented the three committed CoreS3 local StrokeOrder interaction improvements in the shared checkout and wrote the full report to `/Users/mandyw/.pi/agent/sessions/--Users-mandyw-git-xiaozhi-esp32--/subagent-artifacts/outputs/7a3494a1-4852-48a8-a0bf-6733d4cb1e40/stroke-interaction-improvements.md`.
+
+Key changes: fixed every stroke reveal at 1000 ms while retaining the separate 160 ms gap; changed LVGL timing to use monotonic elapsed time with microsecond remainder; kept pause/continue, step, replay, back, and exit actionable during animation; made exit stop playback/timer immediately; added one accepted-action feedback request for the SO entry, successful candidate selection, and accepted visible controls; added a bounded two-request handoff and a non-waiting AudioService playback admission path for a 40 ms, 1600 Hz generated PCM tone.
+
+Validation: focused 4-test set passed; all 13 StrokeOrder UI tests passed; complete host suite passed 128 tests with 1 existing optional skip; clang-format dry-run, Python compile, and `git diff --check` passed. A clean ESP-IDF 6.0.2 CoreS3 build with `CONFIG_STROKE_ORDER_LOCAL=y` passed and produced `build/merged-binary.bin` SHA-256 `78d9a8487d75f71de034ef5e9036d90869b9ec1d3af909944f9ed4b4602c9ace`. No staging or commit was performed, and pre-existing Stick-S3/emoji/8m/.squad changes were preserved.
+
+- The checked-in `m5stack-core-s3` build variant currently leaves `CONFIG_STROKE_ORDER_LOCAL` disabled, so validating this feature requires explicitly enabling that Kconfig option; the successful feature build used an external temporary defaults fragment.
+- CoreS3 audio output is 24 kHz. The new 40 ms feedback tone therefore contains exactly 960 mono PCM samples and is queued through the existing AudioOutputTask.
+- The prior stroke duration was derived from approximate median path length and clamped to 280–900 ms; it is now a constant 1000 ms, while the existing inter-stroke gap remains 160 ms.
+- The complete host suite currently contains 129 discovered tests: 128 passed and one optional transcription test was skipped because `STROKE_TRANSCRIPTION_JSON` was not supplied.
+- The clean feature-enabled image is 0x2c7f20 bytes, leaving 0x1280e0 bytes (29%) in the smallest 0x3f0000 app partition.

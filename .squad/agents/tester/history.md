@@ -2673,3 +2673,1038 @@ merged 五段 offset 均逐字节匹配；NVS/phy 区间全 `0xFF`；esptool v5.
 - 运行时资产恰好 15 个：8 个 SOB1、SCB1、SPY1、runtime.json、APL、Unicode license、NOTICE 和内层 SHA256SUMS；generated_assets.bin 内这 15 项与 runtime 快照逐字节一致。
 - 多文件 `flash_args` 仅写 0x0、0x8000、0xd000、0x20000、0x800000 五段并保留 NVS/phy；merged 对 NVS 0x9000..0xcfff 与 phy 0xf000..0xffff 使用 0xFF padding，从 0x0 写入会清除它们。
 - WebSocket 的 correlated-open/stroke-voice 是静态 capability，不证明动态连接或会话成功；MQTT 两项 capability 均为 false，并安全降级到 SPY1 TopRanked 本地候选。
+
+<!-- pi-squad:0aec4f396895d1b5bded5a9ec740a0c0902ff041e11149a16f52f99ba9705c05 -->
+## 2026-09-13T00:52:53.172Z — stroke-interaction-improvements-review
+
+# StrokeOrder interaction improvements — independent review
+
+## Verdict: **FAIL / REJECTED**
+
+The shared-checkout implementation has useful foundations and retained build/test evidence, but it does **not** correctly preserve elapsed time when an LVGL animation callback is delayed, and the feedback admission path dynamically allocates/copies PCM before checking its nonblocking capacity gate. Both conflict with explicit acceptance requirements. No files were edited, staged, committed, or pushed during this review.
+
+## Findings
+
+### Major — delayed timer callbacks discard elapsed time at reveal/gap boundaries
+
+**Evidence:**
+
+- `main/stroke_order/stroke_order_view.cc:1476-1501` correctly measures real monotonic elapsed time and passes the whole `elapsed_ms` to `StrokeOrderController::Tick()`.
+- `main/stroke_order/stroke_order_controller.cc:380-417` can consume only one phase per call:
+  - in a gap, lines 390-403 add all `dt_ms`, then reset `gap_elapsed_ms_` to zero and return;
+  - in a reveal, lines 405-416 add all `dt_ms`, clamp the stroke to its duration, start a new gap at zero, and return.
+- Any overflow beyond the completed phase is therefore lost. For a two-stroke glyph, `Tick(1160)` from the start should consume the 1000 ms first reveal and the separate 160 ms gap, leaving stroke 2 at 0 ms. The implementation instead finishes stroke 1 and begins a fresh 160 ms gap. `Tick(1260)` should leave stroke 2 at 100 ms, but also begins a fresh gap. Repeated LVGL stalls accumulate drift.
+- `scripts/tests/stroke_order_controller_harness.cc:143-182` tests only exact split calls (`999 + 1`, then `159 + 1`). It has no single delayed tick crossing a reveal boundary, a gap boundary, or multiple phases.
+
+This means the constant itself is correct (`kStrokeDurationMs = 1000` at `main/stroke_order/stroke_order_controller.h:60`, with `kGapMs = 160` at line 61), but real elapsed-time behavior is not correct under the delayed callbacks explicitly called out in the review scope.
+
+**Required fix:** make `Tick()` consume a bounded `remaining_ms` across reveal and gap transitions until either no time remains or playback completes. Add tests such as `Tick(1160)`, `Tick(1260)`, a delay spanning several strokes, and final-glyph completion.
+
+### Major — feedback admission is not allocation-fail-silent and allocates before its nonblocking gate
+
+**Evidence:**
+
+- `main/audio/audio_service.cc:808-821` checks only stopped/empty state before constructing a task.
+- Lines 813-815 call `std::make_unique<AudioTask>()` and copy the full precomputed PCM vector (`task->pcm = ui_feedback_pcm_`) before attempting the `std::try_to_lock` and queue-capacity checks at lines 817-819.
+- At CoreS3’s 24 kHz rate the copy is 960 `int16_t` samples (about 1.9 KiB) per accepted request. Heap allocation/copy occurs on the main task even when the mutex is busy or the playback queue is already full. Allocation failure is not converted to graceful silence; on the normal ESP-IDF no-exception path it can terminate/abort rather than return `false`.
+- `scripts/tests/test_stroke_order_ui.py:527-566` is a textual assertion that `try_to_lock` and a queue limit exist and that no `wait(` or `ResetDecoder` appears. It does not exercise allocation failure, prove allocation-free admission, or compile/run `AudioService::TryPlayUiFeedback()` on the host.
+- `scripts/tests/audio_stream_generation_harness.cc` validates waveform size/endpoints and generation helper behavior, not the actual audio queue/admission/lifetime path.
+
+The task is bounded by queue count and does own its PCM, so there is no dangling view; however, it does not meet the requested nonblocking, allocation/failure-safe behavior.
+
+**Required fix:** preallocate a fixed number of feedback work items/buffers or enqueue an allocation-free fixed token whose PCM remains owned immutably by `AudioService`. Check admission capacity before doing any copy. Add an executable test/fake queue covering busy mutex, full queue, stopped/uninitialized audio, allocation-independent admission, reset while queued, and ordinary TTS ordering.
+
+## Verified positive behavior from source
+
+- Fixed timing constants are now 1000 ms reveal plus a distinct 160 ms gap (`stroke_order_controller.h:60-61`), independent of path length.
+- All five animation-page controls are created clickable in `main/stroke_order/stroke_order_view.cc:808-871`. The controller accepts pause/resume, step, replay, back, and exit from the relevant animation states; step retains the 120 ms debounce.
+- Pause/resume/replay reset the timer baseline through `SyncAnimTimer()`, so paused wall time is not charged on resume. Back renders candidates and deletes the timer; exit synchronously calls `controller_->Exit()` and `StopAnimTimer()` before posting main-task teardown (`stroke_order_view.cc:1212-1289`). Timer callbacks validate both `self->anim_timer_ == timer` and controller state (`1476-1487`), reducing stale-timer risk.
+- Accepted entry, successful candidate selection, and accepted controls each invoke `RequestTouchFeedback()` once (`stroke_order_view.cc:1334-1395`). Invalid/stale candidate and control paths return before feedback; debounce-rejected step returns false and stays silent. CoreS3 polling contains no feedback call, and the existing touch-sequence helper limits legacy actions to one per physical sequence.
+- The feedback handoff is atomically bounded to two pending requests (`main/stroke_order/stroke_order_feedback.h:13-27`) and the audio playback queue remains bounded. Saturation/busy/stopped cases drop feedback without retrying or blocking the UI action.
+- Main-loop ordering handles `MAIN_EVENT_STROKE_ABORT` before `MAIN_EVENT_STROKE_TOUCH_FEEDBACK` (`main/application.cc:295-306`). Thus an exit teardown/reset runs before its tone is admitted. `TryPlayUiFeedback()` does not call `ResetDecoder`, `ResetStreamingState`, or bump stream generations.
+- Feature-specific declarations, members, enum value, PCM storage, and implementation are guarded with `#if CONFIG_STROKE_ORDER_LOCAL`; the new tone header is included only under that guard.
+
+## Validation evidence
+
+This reviewer had read/grep-only tools and **could not independently execute shell commands**. The following are retained author-session command outputs inspected directly, not tests rerun by this reviewer:
+
+- Focused four-test command: **4 passed** in 2.357 s.
+- `python3 -m unittest scripts.tests.test_stroke_order_ui -v`: **13 passed** in 5.688 s.
+- `python3 -m unittest discover -s scripts/tests -v`: **128 passed, 1 skipped** in 24.853 s.
+- `xcrun clang-format --dry-run -Werror ...`, `python3 -m py_compile ...`, and `git diff --check`: retained output indicates success/no output.
+- Canonical CoreS3 build succeeded with the feature disabled by the checked-in variant.
+- A clean IDF 6.0.2 build used `/tmp/m5stack-core-s3-stroke.defaults` and `/tmp/xiaozhi-core-s3-stroke-sdkconfig`, confirmed both `CONFIG_BOARD_TYPE_M5STACK_CORE_S3=y` and `CONFIG_STROKE_ORDER_LOCAL=y`, and produced `build/merged-binary.bin` SHA-256 `78d9a8487d75f71de034ef5e9036d90869b9ec1d3af909944f9ed4b4602c9ace`. This is credible compile evidence for the guarded path, but it cannot prove runtime timing/audio behavior.
+
+## Diff/preservation review
+
+The feature diff consists of modifications to application, audio service, StrokeOrder controller/view, and three test harnesses plus `test_stroke_order_ui.py`, with new `main/audio/ui_feedback_tone.h` and `main/stroke_order/stroke_order_feedback.h`. The exact feature diff does not include `main/CMakeLists.txt`, `main/boards/m5stack/stick-s3/**`, `main/assets/emoji/**`, `scripts/build_default_assets.py`, or `partitions/v2/8m_single_app.csv`.
+
+Retained initial and final `git status` outputs show the same pre-existing unrelated dirty paths, and the initial tracked unrelated diff remained 24 insertions/4 deletions. This supports that the feature implementation did not intentionally edit that work. Because several unrelated paths are untracked directories and no before/after content hashes were retained for them, byte-for-byte preservation of every untracked file cannot be independently proven from read-only evidence.
+
+## Missing tests
+
+1. Single delayed `Tick()` crossing reveal and gap boundaries, including a delay spanning multiple phases/strokes.
+2. Executable LVGL callback/control test; current callback assertions largely count source strings rather than drive LVGL events.
+3. Actual `AudioService::TryPlayUiFeedback()` tests with a fake codec/output task for queue full, mutex busy, service stopped, reset races, TTS coexistence, and drained callback behavior.
+4. Allocation-failure or allocation-free proof for normal feedback admission.
+5. Stress case with three or more rapidly accepted controls, documenting which tones may be dropped by the two-slot handoff and two-task playback bound.
+6. Feature-disabled compile evidence is retained, but no independent review-run compile was possible.
+
+## Residual physical-hardware risks
+
+- No CoreS3 hardware test was run in this review. Speaker loudness/timbre, codec wake latency, actual feedback latency, overlap with TTS, audio underruns, and whether rapid touches sound once each remain unverified.
+- LVGL stalls will currently lengthen multi-stroke animation because overflow is discarded; real frame cadence and control response under camera/audio/network load need measurement after the fix.
+- Stress at low heap must confirm the feedback path cannot abort or create latency spikes.
+- Run at least 100 sessions with pause/continue, step, replay, back, and exit during active reveal while monitoring heap, largest block, WDT, audio underruns, stale callbacks, and touch single-fire behavior.
+
+- `StrokeOrderView::AnimTimerCb()` now measures monotonic elapsed microseconds, but `StrokeOrderController::Tick()` discards overflow whenever one call crosses a reveal or gap boundary.
+- The fixed constants in the current source are `kStrokeDurationMs = 1000`, `kGapMs = 160`, and `kStepDebounceMs = 120`.
+- The feedback path is two-stage bounded: a two-count atomic StrokeOrder handoff followed by the existing bounded audio playback queue.
+- `AudioService::TryPlayUiFeedback()` allocates an `AudioTask` and copies the PCM vector before attempting its try-lock and queue-capacity test.
+- Accepted entry, successful candidate selection, and accepted control callbacks each contain one feedback request; rejected/debounced/stale paths do not reach it.
+- The checked-in `m5stack-core-s3` variant leaves local StrokeOrder disabled; retained compile validation enabled it with an external temporary sdkconfig defaults fragment.
+- Retained author evidence shows a feature-enabled IDF 6.0.2 CoreS3 build succeeded and produced merged-binary SHA-256 `78d9a8487d75f71de034ef5e9036d90869b9ec1d3af909944f9ed4b4602c9ace`.
+- The focused timing test covers exact boundary splits but not a delayed callback that crosses one or more animation phases.
+
+<!-- pi-squad:3e9f662625d3d27c09d621211e634ab9e87dc549d5afc1b0abe2f9e8dfd28ee1 -->
+## 2026-09-13T01:38:35.926Z — stroke-interaction-improvements-rereview
+
+# `stroke-order-interaction-improvements` independent re-review
+
+## Verdict: **REJECTED**
+
+The prior timing defect is fully fixed. The former per-touch heap allocation/PCM copy is also fixed narrowly: touch admission now uses a fixed token and references a pre-generated tone. The revised audio design nevertheless has blocking concurrency/lifetime defects, including a race that can silently discard ordinary decoded audio. No files were edited, staged, committed, or pushed.
+
+## Findings
+
+### Major — UI tokens can cause loss of an ordinary decoded packet
+
+**Files:** `main/audio/audio_service.cc:411-481,952-962`; `main/audio/audio_playback_slot_queue.h:16,30-52`; `scripts/tests/audio_ui_feedback_admission_harness.cc:64-79`
+
+`OpusCodecTask()` observes playback size below two, removes a decode packet, marks `decode_in_flight_`, and unlocks while decoding. During that interval, UI feedback can fill the two shared slots. On relock, `EnqueueDecodedPlaybackLocked(std::move(task), generation)` returns false if full. Its caller ignores the result, and the by-value `unique_ptr` parameter destroys the decoded ordinary task. This can produce a missing TTS/downlink frame.
+
+The harness only proves FIFO for items already admitted. It even expects an ordinary push to fail when UI has filled the ring, but has no reservation/retry/priority policy for the production in-flight decoder.
+
+**Required:** reserve capacity for in-flight decode, reject UI while ordinary capacity is reserved, or retain/retry decoded work with generation-aware cancellation. Add the exact decode-in-flight/UI-saturation test and assert that ordinary audio is not dropped.
+
+### Major — failed try-lock still reads mutex-protected generation state
+
+**Files:** `main/audio/audio_service.cc:835-844`; writers at `193-194,866-867,890-891`
+
+`TryPlayUiFeedback()` obtains `audio_queue_mutex_` with `std::try_to_lock`, but passes `stream_generation_.playback` as a function argument even if `lock.owns_lock()` is false. Arguments are evaluated before `AudioTryAdmitUiFeedback()` rejects the false lock flag. The generation field is non-atomic and is mutated under this mutex by `Stop()`, `ResetStreamingState()`, and `ResetDecoder()`. Contention with reset/stop can therefore cause an unsynchronized read/write data race instead of safe fail-silent rejection.
+
+**Required:** return immediately on failed try-lock before reading any protected queue/generation state. Add a real concurrent reset/stop busy test, preferably under TSAN.
+
+### Major — feature-on raw ownership has no safe destruction contract
+
+**Files:** `main/audio/audio_service.cc:36-51,185-205,348-380,938-946`; `main/audio/audio_service.h:187-200`; `main/audio/audio_playback_slot_queue.h:19-24,65-77`
+
+Queued ordinary tasks are stored as raw `void*`. Reset/stop drains queued pointers once, and a popped ordinary slot is correctly adopted by an output-task-local `unique_ptr`; no double release was found on those paths. But `AudioService::~AudioService()` neither drains the raw queue nor stops/joins worker tasks. Direct destruction can leak queued ordinary tasks. If a UI token was popped, `AudioOutputTask()` holds `&ui_feedback_pcm_` outside the mutex while member destruction can free that vector; `Stop()` does not wait for output-task exit. Reboot delays reduce the practical firmware risk but do not prove destruction safety.
+
+**Required:** establish worker-exit synchronization and drain ownership on destruction, or use destruction-safe owning fixed storage. Add queued-ordinary and in-flight-UI teardown tests.
+
+## Status of the two prior Major findings
+
+### Timing overflow: **fully resolved**
+
+`StrokeOrderController::Tick()` (`stroke_order_controller.cc:380-436`) consumes a `uint32_t remaining` budget across reveal and gap phases. Work is bounded by `kMaxStrokesPerCharacter * 2 + 2` = 98 iterations. Elapsed fields are increased only when `remaining < need` (need is at most 1000 or 160); otherwise `need` is subtracted, so large `dt` cannot overflow those fields. The final stroke transitions directly to `Completed`, stays at 1000 permille, and starts no trailing gap. Non-Animating states are no-ops.
+
+The executable harness contains the required cases (`stroke_order_controller_harness.cc:186-205,232-249`):
+
+- `Tick(1160)`: next stroke at 0 ms.
+- `Tick(1260)`: next stroke at 100 permille.
+- `Tick(2320)`: crosses two reveals and two gaps.
+- `Tick(4000)`: final completion without trailing gap.
+- `Tick(0xFFFFFFFFu)`: bounded completion.
+- Paused `Tick(5000)` and completed `Tick(500)`: no-op.
+
+Pause/resume idempotence, replay, step debounce, back, and exit are covered at harness lines 131-162 and 196-227. At the view layer, timer deletion clears identity/baselines (`stroke_order_view.cc:592-600`), pause/resume/replay synchronize a fresh baseline (`602-624`), and callbacks reject stale timer identity/invalid overlay (`1476-1486`). Back rebuilds candidates and stops the timer; exit stops it synchronously before main-task teardown (`1212-1288`). LVGL callbacks themselves are not executable-tested.
+
+### Allocation/copy before admission: **resolved narrowly; complete audio acceptance is not resolved**
+
+The tone is generated once during `AudioService::Initialize()`. `TryPlayUiFeedback()` has no `make_unique`, vector allocation/copy, wait, decoder reset, or generation bump. It uses a fixed two-slot ring and output references the service-owned PCM. Feature-off retains the original `deque<unique_ptr<AudioTask>>` path.
+
+That fixes the prior allocation-before-capacity issue, but not the three defects above. The harness’s “immutable lifetime” check (`audio_ui_feedback_admission_harness.cc:31-36,107-109`) is tautological for production lifetime: the helper receives only `tone_ready`, never the tone pointer, and the test does not instantiate `AudioService`, run workers, reset, stop, or destroy it.
+
+## Touch behavior
+
+Source inspection confirms:
+
+- Entry requests feedback once after its accepted local gate (`stroke_order_view.cc:1334-1347`).
+- Candidate feedback occurs once only after generation/state validation and successful selection (`1350-1375`).
+- Control feedback occurs once only when `HandleControlLocked()` returns true (`1379-1394`); invalid indices/state and debounce-rejected step are silent.
+- Entry/close are disarmed appropriately; feedback uses a bounded atomic two-count handoff (`stroke_order_feedback.h:13-27`).
+- CoreS3 touch polling contains no feedback request, so polling itself is silent.
+
+The Python coverage here is primarily source-string inspection (`test_stroke_order_ui.py:552-587`), not driven LVGL events. Physical stale-event and single-fire behavior remain unproved.
+
+## Guards and artifact scope
+
+Application feedback events/members, audio queue/tone members, and `TryPlayUiFeedback()` are guarded by `CONFIG_STROKE_ORDER_LOCAL`. With the feature off, `audio_service.cc` uses the original deque path and CMake excludes stroke controller/view sources.
+
+Retained final Git output identifies this artifact as modifications to application, audio service, stroke controller/view, and four test files, plus new:
+
+- `main/audio/audio_playback_slot_queue.h`
+- `main/audio/ui_feedback_tone.h`
+- `main/stroke_order/stroke_order_feedback.h`
+- `scripts/tests/audio_ui_feedback_admission_harness.cc`
+
+`main/CMakeLists.txt`, `main/boards/m5stack/stick-s3/**`, `main/assets/emoji/**`, `scripts/build_default_assets.py`, `partitions/v2/8m_single_app.csv`, and `.squad/**` remain separate dirty paths and are not in the logical feature list. With no shell access, I could not rerun Git status or prove byte-for-byte preservation of untracked unrelated files.
+
+## Validation: reviewer-run versus retained evidence
+
+**Reviewer-run commands:** none; only read/grep/list tools were available. I inspected current sources, headers/harnesses, retained command records, and present `/tmp` build metadata.
+
+**Retained author command results:** 
+
+- Python compile: OK.
+- Focused five tests: **5 passed in 4.013 s**.
+- `python3 -m unittest scripts.tests.test_stroke_order_ui -v`: **14 passed in 6.448 s**.
+- Full discovery: **129 passed, 1 skipped in 26.299 s** (optional transcription fixture skipped).
+- clang-format dry-run and scoped `git diff --check`: reported OK.
+- The first in-repository “feature-off” build was invalid because stale CMake cache referenced a feature-on sdkconfig; it is not counted.
+- Valid outside-dir feature-off evidence remains at `/tmp/xiaozhi-so-off-build`: CoreS3 selected, feature unset, IDF v6.0.2 in compile commands, no view source, app `0x2bbc10`, 31% free. Retained app SHA-256: `e144cf559cc456f2ba00e4ec7b402bd996b556be8c8e468f18c5fa9ed63a103d`.
+- Feature-on evidence at `/tmp/xiaozhi-so-on-build`: feature enabled, IDF v6.0.2, audio/controller/view compiled, app `0x2c7f40`, 29% free, merged image `0xf37b4f` bytes. Retained hashes: app `51c7de0862293ef3bbf6bf16afc23618e93fb4fd6b2e35de43553c801381d1bf`; merged `a2f518f3dd38261d1f5cdbc64cbc9fac97d2233e23f25d17f05d50c7c955c4bd`; assets `54453b5232408dfb8cf8dadbde9dd5d93a1bdb90f213df69d7ff075210783dd0`.
+
+These prove compilation and pure controller/ring cases, not production audio concurrency.
+
+## Missing tests before approval
+
+1. Decode-in-flight plus UI saturation, asserting no ordinary loss.
+2. Actual mutex contention concurrent with reset/stop under TSAN.
+3. Stop/drain/destruction with queued ordinary and in-flight UI work.
+4. Fake-codec production `AudioOutputTask` FIFO/generation/reset behavior.
+5. Executable LVGL actions during active animation, including stale/invalid/debounce silence.
+6. Physical CoreS3 smoke/stress.
+
+## Hardware residuals
+
+No physical CoreS3 run is evidenced for this revision. Unverified: tone volume/quality and latency, TTS overlap, codec power transitions, audio underruns, real animation cadence, controls during active reveal, stale-touch single-fire, overlay-closed legacy `ToggleChatState`, and 100-session heap/timer/WDT stability.
+
+- `StrokeOrderController::Tick()` now consumes elapsed time across 1000 ms reveal and 160 ms gap phases with a 98-iteration upper bound; requested overflow, completion, huge-dt, and paused cases exist in the executable harness.
+- The feature-on admission path uses a fixed two-slot token ring and pre-generated tone, eliminating per-touch AudioTask allocation and PCM copy.
+- `TryPlayUiFeedback()` reads non-atomic playback generation even when its try-lock failed, racing reset/stop generation writers.
+- UI feedback can fill the shared ring during an in-flight decode; the failed ordinary enqueue is ignored and destroys that decoded AudioTask.
+- The new audio harness tests only the standalone ring/helper, not actual AudioService concurrency, workers, stop, or destruction.
+- Retained IDF 6.0.2 metadata shows CoreS3 feature-off and feature-on builds, but no physical-device validation.
+
+<!-- pi-squad:175c50aa01997f0673f91f9ad12b448d22ec268f4059c9b92b039b2cd4a65542 -->
+## 2026-09-13T02:06:44.245Z — stroke-interaction-improvements-final-review
+
+# Final independent review — `stroke-order-interaction-improvements`
+
+## Verdict: **REJECTED**
+
+The third revision fixes the original failed-`try_to_lock` race, the decode-in-flight capacity race, and the raw-pointer ring ownership problem. The fixed 1000 ms reveal, separate 160 ms gap, bounded elapsed-overflow consumption, and controls/feedback behavior during `Animating` are still present. However, the claimed teardown contract is incomplete on the actual CoreS3 path: `AudioService` joins only its own three workers, while `AfeAudioEngine` retains unjoined tasks and callbacks that can access destroyed engine or `AudioService` state. A second destruction-order defect can invoke an `Application` callback after its event group has been deleted. These are release-blocking lifetime defects.
+
+No files were edited, staged, committed, or pushed.
+
+## Release-blocking findings
+
+### BLOCKER 1 — CoreS3 AFE workers are not stopped or joined before engine/service destruction
+
+**Evidence:**
+
+- `main/audio/audio_service.cc:36-67` calls `Stop()` and `JoinWorkersIfAny()` before tearing down the timer, event group, Opus handles, and resamplers.
+- `main/audio/audio_service.cc:1016-1039` waits only for `audio_input_task_handle_`, `audio_output_task_handle_`, and `opus_codec_task_handle_`.
+- CoreS3 takes the AFE engine path (`main/audio/audio_service.cc:26-29`). `AfeAudioEngine` creates `processing_task_` at `main/audio/engines/afe_audio_engine.cc:173-177`.
+- That task has an unconditional infinite loop and a `portMAX_DELAY` wait at `main/audio/engines/afe_audio_engine.cc:348-350`; there is no stop flag, exit bit, or join.
+- `AfeAudioEngine::~AfeAudioEngine()` instead immediately destroys `afe_data_`, frees wake-encoder stack/TCB memory, and deletes its event group (`main/audio/engines/afe_audio_engine.cc:27-42`).
+- A separate static wake-word encoder task is launched at `main/audio/engines/afe_audio_engine.cc:492-556`; its handle is not joined before lines 32-36 free the storage backing that task.
+- The AFE output callback captures `AudioService*` at `main/audio/audio_service.cc:115-117`, and the unjoined processing task invokes it at `main/audio/engines/afe_audio_engine.cc:429-441`. Thus it may call `PushTaskToEncodeQueue()` after the three AudioService workers have signaled exit and while/after AudioService queue members are being destroyed.
+
+This invalidates the claimed guarantee that UI PCM, mutex/CV, codec state, and callbacks are quiescent before destruction. The helper model `AudioServiceShutdownState` in `main/audio/audio_playback_slot_queue.h:161-183` is test-only and is not connected to production task state, so its passing assertions do not establish this property.
+
+**Required before approval:** provide an engine-level stop/join contract that covers the AFE processing task, wake-word encode task, and any custom wake-word workers; detach/quiesce callbacks before `AudioService` member destruction; exercise the real shutdown sequence or an implementation-faithful task abstraction.
+
+### BLOCKER 2 — `Application` destroys the callback target before `AudioService` teardown can finish
+
+**Evidence:**
+
+- `Application::~Application()` stops/deletes its clock timer and deletes `Application::event_group_` in the destructor body (`main/application.cc:94-100`).
+- `audio_service_` is a member declared at `main/application.h:158`, so its destructor runs only after the `Application` destructor body.
+- The installed playback-drained callback captures `this` and writes that event group (`main/application.cc:146-148`).
+- `AudioService::~AudioService()` calls `Stop()` (`main/audio/audio_service.cc:41`), and `Stop()` can invoke `callbacks_.on_playback_drained` (`main/audio/audio_service.cc:233-234`). In-flight output/decode workers can also invoke it before their exit signal (`main/audio/audio_service.cc:432-434,533-534`).
+
+If Application destruction occurs with queued or in-flight playback, these callbacks can call `xEventGroupSetBits()` on the already deleted Application event group. This is a concrete teardown UAF/order violation. The service must be shut down and callback delivery quiesced while the callback owner is still alive, or callbacks must be cleared through a synchronized shutdown API before deleting the Application event group.
+
+### MAJOR — pending ordinary decode can still be starved by repeated UI admission
+
+The in-flight reservation is mechanically correct once a packet has been removed: `decode_in_flight_` is set under the queue mutex at `main/audio/audio_service.cc:453-459`, and UI then leaves one physical slot free (`main/audio/audio_service.cc:891-898`; `main/audio/audio_playback_slot_queue.h:44-70`). The ordinary `unique_ptr` remains owned on a full push and is retried/cancelled by the loop at `main/audio/audio_service.cc:510-528`.
+
+However, the codec cannot remove an ordinary packet while both slots contain UI tokens because its predicate requires `PlaybackOutputSizeLocked() < 2` (`main/audio/audio_service.cc:443-446`). UI admission checks only `decode_in_flight_`; it does not reject when `audio_decode_queue_` already has pending ordinary work. After each output pop, a stream of higher-priority main-task UI requests can refill the freed slot before the priority-2 codec task establishes its reservation. Capacity is bounded, but ordinary work has no starvation-free priority before removal. This is not covered by the harness’s finite, manually popped preexisting-UI scenario.
+
+To satisfy the stated ordinary-TTS priority requirement, UI admission should account for pending ordinary decode work (or use a dedicated priority mechanism), and a concurrent test should prove eventual ordinary admission under sustained UI requests.
+
+## Confirmed behavior that remains correct
+
+- **Failed try-lock:** `main/audio/audio_service.cc:880-901` returns immediately at lines 888-890 before any access to `stream_generation_.playback`, `playback_slots_`, or `decode_in_flight_`. Protected reads occur only in the post-lock lambda. No argument-evaluation race remains.
+- **Decode reservation/ownership:** while `decode_in_flight_` is true, at most one UI token can occupy the two-slot ring. `TryPushOrdinary()` checks full/null before moving (`main/audio/audio_playback_slot_queue.h:72-82`), so failed capacity admission leaves the caller owning the task. Stop and generation changes wake the predicate and cancel the task rather than silently dropping a current-generation packet.
+- **CV paths:** output pops notify; Stop/reset clear queues and notify; the enqueue wait predicate handles stop, generation replacement, capacity, and spurious wakeups. No lost-current-generation task was found after a decode reservation is established.
+- **Owning ring:** slots contain `std::unique_ptr`, UI insertion resets rather than inventing ownership, pop move-transfers ownership then empties the source slot, `Clear()` destroys queued ordinary tasks, and slot reuse/wraparound is structurally sound (`main/audio/audio_playback_slot_queue.h:27-108`).
+- **UI admission properties:** it remains try-lock/nonblocking, fixed-capacity, allocation-free and PCM-copy-free per request. The 40 ms PCM is generated once and referenced by the output worker. Busy/full/stopped/unavailable paths fail silently.
+- **Feature-off queue path:** `CONFIG_STROKE_ORDER_LOCAL` still selects the original `deque<unique_ptr<AudioTask>>` playback queue. The new global Start/Stop/destructor behavior nevertheless affects feature-off builds too, so compile success does not establish runtime teardown safety.
+- **Timing:** `main/stroke_order/stroke_order_controller.h:60-63` retains 1000 ms reveal and 160 ms gap. `Tick()` in `main/stroke_order/stroke_order_controller.cc` loops over a bounded maximum number of phases and carries all elapsed remainder across reveals/gaps. Existing harness cases cover 1160 ms, 1260 ms, 2320 ms, 4000 ms, and `UINT32_MAX`.
+- **Controls/feedback during animation:** `Pause`, `Resume`, `StepForward`, `Replay`, `BackToCandidates`, and `Exit` accept the documented animating/paused states. `StrokeOrderView::HandleControlLocked()` remains callable while animating (`main/stroke_order/stroke_order_view.cc:1212-1289`), and feedback is requested only when an entry/candidate/control action is accepted (`main/stroke_order/stroke_order_view.cc:1330-1395`). The handoff counter remains bounded.
+
+## Validation evidence
+
+### Reviewer-run
+
+Read-only source review and text searches were performed over the actual current files listed above, including the production audio service, owning ring, AFE engine, Application lifetime, controller/view, and all focused harness sources. This reviewer had no shell execution tool, so **no tests, sanitizer, formatter, Git commands, hashes, or firmware builds were run independently**.
+
+### Retained evidence inspected
+
+The retained backend log records:
+
+- `python3 -m unittest scripts.tests.test_stroke_order_ui -v`: **15 passed**.
+- `python3 -m unittest discover -s scripts/tests -v`: **130 passed, 1 skipped**.
+- Busy-gate harness: compiled with TSAN after adding the macOS SDK include path; **PASS**, `failed_locks=656458`, `successful_locks=323888`, no reported TSAN race. An earlier compile attempt failed because `<cstddef>` was not found.
+- Formatter dry-run and targeted `git diff --check`: reported successful.
+- ESP-IDF **v6.0.2** CoreS3 feature-on incremental `idf.py app`: linked `xiaozhi.bin` size `0x2c8130`, 29% free, SHA-256 `e4337b615049e672a975cdff2a3b4641f0f541983f92c9f2874a9e8801b880df`.
+- ESP-IDF **v6.0.2** CoreS3 feature-off incremental `idf.py app`: linked `xiaozhi.bin` size `0x2bbcf0`, 31% free, SHA-256 `3d60c83287baf9d1eea690e3910a528fc13d16d7f7c8276e5c29430f9c4e85a3`.
+- The log shows both builds reusing existing `/tmp/xiaozhi-so-*-build` caches; they are useful compile/link evidence but are not clean-build evidence.
+- Retained post-change status scoped the audio revision to `main/audio/audio_service.{cc,h}`, `main/audio/audio_playback_slot_queue.h`, `main/audio/ui_feedback_tone.h`, `scripts/tests/audio_ui_feedback_{admission,lock}_harness.cc`, and `scripts/tests/test_stroke_order_ui.py`, while separately listing unrelated dirty Squad/CMake/Stick-S3/default-assets paths. No revision edit to controller/view was shown.
+
+## Missing tests and residual risks
+
+- No test instantiates the real `AudioService` with FreeRTOS tasks and a fake codec. The shutdown helper and admission mixer are models, not production lifecycle execution.
+- No test covers AFE processing-task shutdown, wake-word encode teardown, callback detachment, Application destruction order, task-creation failure, or repeated Start/Stop on-device.
+- No sustained-contention test proves that pending ordinary decode cannot be starved by repeated UI requests.
+- No clean feature-on/off build was retained for this exact revision; both retained builds were incremental.
+- No physical CoreS3 test was run. Tone audibility/latency, UI-tone versus TTS interaction, I2S power transitions, controls during active reveal, touch single-fire behavior, heap/timer stability over 100 sessions, WDT/audio underruns, and real shutdown/restart behavior remain unverified.
+
+- The fixed ring now owns ordinary playback tasks with `std::unique_ptr`; failed ordinary pushes do not move ownership, while pop, clear, wraparound reuse, and queue destruction have exactly-once ownership semantics in the inspected implementation.
+- `AudioService::TryPlayUiFeedback()` now returns on a failed `try_to_lock` before reading playback generation, queue occupancy, or `decode_in_flight_`; the retained busy-gate TSAN run passed.
+- The decode reservation is established when the codec removes a packet and remains active until ordinary enqueue or cancellation, preventing UI from consuming the reserved slot in that interval.
+- CoreS3 uses `AfeAudioEngine`, whose processing task loops forever without a stop/join path; `AudioService::JoinWorkersIfAny()` does not include that task or the wake-word encode task.
+- `Application::~Application()` deletes its event group before the `audio_service_` member is destroyed, while AudioService teardown can still invoke a callback that writes that event group.
+- The current timing implementation retains a fixed 1000 ms per-stroke reveal, a separate 160 ms gap, and bounded consumption of elapsed overshoot across multiple phases.
+- Retained evidence shows 130 host tests passed with one skip and IDF 6.0.2 feature-on/off CoreS3 incremental app builds linked successfully; neither build was a clean build and neither was flashed.
+
+<!-- pi-squad:90a85993b946f5d66988827b36f921037df62c233bb510e7b02628b3ead8d0d3 -->
+## 2026-09-13T02:42:15.549Z — stroke-interaction-improvements-lifecycle-retry
+
+Completed the same-protocol lifecycle retry and wrote the required report to `/Users/mandyw/.pi/agent/sessions/--Users-mandyw-git-xiaozhi-esp32--/subagent-artifacts/outputs/16a62e45-2bfd-4035-9c84-156a1063664a/stroke-interaction-improvements-lifecycle-retry.md`. Inspection found no remaining half-written or compile defect, so no semantic source edit was needed; relevant C/C++ was formatted and the scoped diff/Python checks passed. Focused lifecycle/admission/lock/timing/UI tests passed 7/7; the full host suite ran 131 tests with 130 passed and one existing optional fixture skip. Clean final-source ESP-IDF 6.0.2 builds passed for feature-on CoreS3 (app `0x2c98f0`, merged SHA-256 `79edf86bde35ce32030d7e356de5b555e6e96e4bc190cb334be417ca7c56ae51`), feature-off CoreS3 (app `0x2bd470`, SHA-256 `7fcc1a3bf0af9cb4a980675832dfdf9ffa5ba7bf05f9caefe6e9c7c542632ab4`), and representative LiteAudioEngine ESP32-C3 (app `0x25d6f0`, SHA-256 `be59322f12e1f7348c1d7d6de360ed6e5bac821154a3f711c49dd35522a6476a`). Nothing was staged, committed, or pushed; unrelated dirty work was preserved.
+
+- `Application::~Application()` explicitly calls the idempotent `AudioService::Shutdown()` before deleting the Application event group, keeping callback owner state alive through producer quiescence and synchronous callback detachment.
+- AudioService shutdown orders stop publication and queue drain before joining only non-null service worker handles, then shuts down engine workers, then detaches callbacks; its destructor safely repeats shutdown before destroying engine/timer/event/codec resources.
+- AfeAudioEngine shutdown uses a bounded 100 ms AFE fetch, joins AFE processing, shuts down and joins CustomWakeWord encoding, joins its native wake encoder, and clears callbacks only afterward; failed task creation leaves null handles and therefore cannot add impossible waits.
+- LiteAudioEngine's final shutdown path compiled and linked on ESP32-C3; it has no independent worker and disables processing, stops/detaches WakeNet, clears buffered output, and clears callbacks after AudioService input has joined.
+- UI feedback admission returns immediately on a failed try-lock and rejects whenever ordinary decode is queued or in flight. The fixed two-slot ring preserves ownership on capacity failure, and sustained UI attempts cannot refill capacity reserved for ordinary audio.
+- Accepted StrokeOrder behavior remains fixed at 1000 ms per stroke plus a separate 160 ms gap, with elapsed-overflow consumption, idempotent pause/continue/replay, debounced step, and active-animation back/exit controls.
+- The final feature-on CoreS3 build compiled AudioService, AFE, CustomWakeWord, controller, and view; feature-off compiled the deque path without controller/view; the representative C3 build compiled AudioService and LiteAudioEngine.
+- Physical CoreS3 behavior remains unverified: codec-I/O shutdown latency, touch/beep latency and loudness, TTS overlap, live animation control responsiveness, fallback short-touch, and long-run heap/timer/WDT/audio behavior still require hardware testing.
+
+<!-- pi-squad:36435c79b169d497ae542f6072ca2c4a0d47b178e8ef3063bda4556bed43146a -->
+## 2026-09-13T05:57:54.876Z — stroke-sequential-animation-test-plan
+
+# StrokeOrder 逐笔可见动画：回归测试计划与只读审查
+
+## 审查结论
+
+**REJECTED。** 当前实现确实允许一次已准入的延迟 timer 回调或 Pause 前的时间结算跨过多个“笔画揭示/笔间间隔”阶段，而 LVGL 只在全部推进完成后重绘一次；这可以直接造成用户看到若干笔瞬间完成，而不是逐笔演示。
+
+本次仅用只读文件读取/检索审查源码和测试；**未运行 shell、测试、编译或真机操作，也未修改文件**。以下“预期失败”由代码路径静态推导，不冒充已执行结果。
+
+## 1. 当前故障路径与证据
+
+### 1.1 一个 `Tick()` 会吃完整个 backlog
+
+- `main/stroke_order/stroke_order_controller.h:60-63` 定义每笔 1000 ms、笔间 160 ms、timer 周期 33 ms。
+- `main/stroke_order/stroke_order_controller.cc:380-438` 的 `Tick(dt_ms)` 把 `dt_ms` 放入 `remaining`，在 `while` 中反复扣减当前笔画和 gap。`remaining -= need` 后会继续进入下一阶段，最多遍历整个字的全部阶段。
+- 因而从三笔字“口”的第一笔起执行一次 `Tick(2320)`，会走完第一笔 1000 ms、gap 160 ms、第二笔 1000 ms、gap 160 ms，直接来到第三笔；一次 `Tick(4000)` 或 `Tick(UINT32_MAX)` 会直接完成整个字。
+
+### 1.2 production clock 把完整迟到时间一次交给 Controller
+
+- `main/stroke_order/stroke_order_ui_action.h:32-45` 的 `StrokeOrderAnimationClock::Settle()` 计算从上次成功准入到当前的全部 wall-clock delta，并一次调用 `controller.Tick(...)`。所谓 clamp 只是夹到 `UINT32_MAX` ms；这约为 49.7 天，完全不是视觉帧级上限。
+- `main/stroke_order/stroke_order_ui_action.h:61-72` 的 timer helper 在成功通过 generation/session/cancel-fence 后只调用一次 `Settle()`。
+- coordinator try-lock miss 时保留 baseline 本来可以保证安全，但当前下一次成功准入会把所有积压毫秒一次追完。generation/cancel-fence 正确性不应等同于动画 backlog 必须追赶。
+
+### 1.3 Pause 同样能在一次点击中跨笔甚至完成整个字
+
+- `main/stroke_order/stroke_order_ui_action.h:115-129` 在 Pause 前调用同一个无视觉上限的 `clock.Settle()`；注释还明确要求“Account for all active wall time”，并允许结算直接完成 glyph。
+- 因此若 timer 长时间未成功准入，用户点击 Pause 时，控制器可先跳过多笔再进入 Paused，甚至直接变成 Completed。
+- Pause action 最终也只触发一次重绘（`main/stroke_order/stroke_order_view.cc:1214-1248`），中间笔画不会显示为 current/accent。
+
+### 1.4 LVGL 只渲染推进后的最终快照
+
+- 首次进入动画页会建立 timer 并重绘初始帧（`main/stroke_order/stroke_order_view.cc:812-872`）。
+- `RedrawCanvas()` 只读取最终的 `current_stroke/completed/progress/in_gap` 快照；旧笔画直接作为 done 绘制，只有当前非-gap 笔画使用 accent 中线揭示（`main/stroke_order/stroke_order_view.cc:1148-1193`）。
+- timer callback 先完成整次 `StrokeOrderApplyAnimationTick()`，之后仅调用一次 `RedrawCanvas()`（`main/stroke_order/stroke_order_view.cc:1439-1461`）。Controller 在一个 `Tick` 内经过的任何中间笔画都没有 LVGL render 机会。
+
+这形成确定的逻辑链：**大 delta → 同一次 Controller 更新跨多阶段 → 一次最终重绘 → 中间笔画从未以 current/accent 状态呈现。**
+
+## 2. 需要锁定的精确顺序可见性不变量
+
+定义可观察播放阶段：
+
+- `R(i,p)`：正在揭示第 `i` 笔，`0 <= p <= 1000`；
+- `G(i)`：第 `i` 笔已完成，处于其后的 gap；
+- `C(last)`：最后一笔完成。
+
+“**visible tick**”指一次成功通过 coordinator/session/cancel-fence 的自动 elapsed settlement，并且 production 随后执行一次 `RedrawCanvas()`；try-lock miss、stale generation 和 cancel-fence 拒绝均不算 visible tick，且必须零修改。
+
+必须满足：
+
+1. **相邻阶段约束**：一次自动 visible tick 只能留在当前阶段，或最多越过一个相邻边界：`R(i) -> G(i)`、`G(i) -> R(i+1)`、`R(last) -> C(last)`。绝不允许 `R(i) -> R(i+1)`、`R(i) -> G(i+1)` 或一次完成两笔。
+2. **每笔揭示帧**：自动播放的每个 `R(i)` 在完成前必须至少被观察到一次 `0 < p < 1000` 的 current/accent 帧。初始 `R(0,0)` 已由动画页首帧提供，但仅有 0% 帧后突然 100% 仍不算动画揭示。
+3. **视觉量子上限**：建议每次成功 settlement 最多应用 `q = kTickMs = 33 ms`，即 `applied = min(real_delta, q)`。因为 `q < kGapMs` 且 `q < kStrokeDurationMs`，单次更新结构上不可能跨两个边界；正常 30 FPS 时仍约 1 秒，stall 时只会变慢。
+4. **不追 backlog**：成功处理迟到样本后，clock baseline 必须重设为该样本时间；超过 `q` 的未渲染毫秒直接丢弃，不存入待追赶队列。下一次 `+33 ms` callback 只能再推进至多 33 ms，不能因旧 backlog 突发追赶。
+5. **小数余量不是 backlog**：小于 1 ms 的 `remainder_us` 可以保留；不得把被裁掉的整毫秒或完整 phase 保存起来稍后突发消费。
+6. **Pause settlement 同约束**：Pause 点击前最多结算一个 `q`，随后进入 Paused。若这一量子恰好只完成当前笔，则可以停在 Paused+gap；若恰好完成最后一笔，则可以进入 Completed。不能因 Pause 结算跳过中间笔。
+7. **正常时序目标**：连续成功的小 delta 累计到 1000 ms 才完成当前笔。例：30 次 33 ms 得到 `R(i,990)`，再 10 ms 得到 `G(i)`；gap 用 4×33+28 ms 到下一笔。stall 不要求补回丢弃时间。
+8. **Replay/Step**：Replay 必须立即重置并呈现 `R(0,0)`，旧 clock/backlog 清零。Step 是显式用户动作，不是自动 elapsed tick；每次被 debounce 接受的 Step 最多完成一个逻辑笔画，并停在下一笔的 Paused/partial-start 状态或最终 Completed，不得排队。被 debounce 拒绝的 Step 零修改。
+9. **最终完成**：`C(last)` 前必须已经观察到最后一笔的 partial current 帧；Completed 后 timer tick 为 no-op。大 delta 只有在当前已是最后一笔且距完成不超过当前受限量子时，才可完成它。
+
+## 3. 一个快速、确定、当前必红的测试种子
+
+复用 `scripts/tests/stroke_order_ui_fence_harness.cc` 的真实 `Fixture`：它已使用真实 Controller、Session、Coordinator、AnimationClock，且现有 smoke blob 中的候选固定为二笔字“人”。不需要 LVGL、网络、ESP-IDF 或新资产。
+
+在 `TestPauseClock()` 增加独立 block：
+
+```cpp
+{
+    Fixture f(blob);
+    constexpr uint64_t start = 1'000'000;
+    assert(f.ApplyUs(Action::Candidate, start));
+    assert(f.controller.current_stroke() == 0);
+    assert(f.controller.current_progress_permille() == 0);
+
+    // One admitted callback arrives five seconds late.
+    assert(f.TickUs(start + 5'000'000));
+    const uint32_t first = f.controller.current_progress_permille();
+    assert(f.controller.state() == StrokeOrderUiState::Animating);
+    assert(f.controller.current_stroke() == 0);
+    assert(!f.controller.in_gap());
+    assert(first > 0 && first <= StrokeOrderController::kTickMs);  // expected 33
+
+    // No old backlog may burst on the next normal callback.
+    assert(f.TickUs(start + 5'033'000));
+    const uint32_t second = f.controller.current_progress_permille();
+    assert(f.controller.state() == StrokeOrderUiState::Animating);
+    assert(f.controller.current_stroke() == 0);
+    assert(second > first && second <= first + StrokeOrderController::kTickMs);
+}
+```
+
+**为什么当前必红：** 现有 `Settle()` 会把 5000 ms 全部传给 `Tick()`；“人”的总自动时长只有 `1000 + 160 + 1000 = 2160 ms`，所以第一次 5 秒 callback 后实际状态会是 Completed，而不是第一笔约 33‰。
+
+单一目标命令（添加上述断言后，从仓库根目录运行）：
+
+```bash
+PYTHONPATH=scripts/tests python3 -m unittest -v \
+  test_stroke_interaction_systems.StrokeInteractionTest.test_exact_ui_session_cancel_fence_action_order_and_contention_tsan
+```
+
+该方法由 `scripts/tests/test_stroke_interaction_systems.py:15-37` 编译并运行上述 production-path harness；当前设有 30 秒 timeout，属于 host-only 快速回归。**本次因只读且无 shell 工具，未实际执行该命令。**
+
+## 4. 完整确定性用例矩阵
+
+| 用例 | 操作序列 | 必须观察到的结果 |
+|---|---|---|
+| 正常约 1 秒 | 从 `R0(0)` 开始，30 次 `+33 ms`，再 `+10 ms` | 依次 partial；30 次后 `R0(990)`；最后进入 `G0`，期间没有下一笔 |
+| 延迟 5 秒 | `R0(0)` 后一次 `+5000 ms`，再 `+33 ms` | 第一次仍为 `R0` 且 `0<p<=33`；第二次至多再增 33；不进入 gap/下一笔/Completed |
+| 笔画边界附近延迟 | 先到 `R0(990)`，再给 5 秒 delta | 只允许完成第一笔并停在 `G0`；下一个正常 callback 仍不能跨完 160 ms gap |
+| gap 正常 | 从 `G0` 开始，4×33 ms，再 28 ms | 前四次仍 `G0`；最后一次只到 `R1(0)`（若允许消费量子内余数，也必须是 `R1` 的小 partial，且只跨一个边界） |
+| gap 中延迟 | 先把 gap 推到 132 ms，再给 5 秒 delta | 最多进入 `R1`，且 `p<1000`；不能完成第二笔或再进 gap |
+| try-lock miss + Pause | 先以小 tick 到 `R0(250)`；制造一次未准入 timer；5 秒后成功 Pause | miss 零修改；Pause 最多结算 33 ms，因此停在 Paused、第一笔约 283‰，不能 Completed |
+| Pause/Resume | 上例暂停后等待任意长 wall time，再 Resume，随后 `+33 ms` | 暂停等待不计入；Resume 本身不跳进度；下一 tick 仅再增约 33，无旧 backlog |
+| Pause 恰逢边界 | `R0(990)` 后用大 delta 点击 Pause | 最多停在 Paused+`G0`；不得到 `R1` 的完成态 |
+| Replay | 分别从 Animating、Paused、Completed 执行 Replay | 每次呈现 `R0(0)`，旧 fraction/整毫秒 backlog 清掉；Replay 后首个 5 秒迟到 callback 仍只到约 33‰ |
+| Step 与 debounce | 第一笔 partial 时 Step；<120 ms 再 Step；>=120 ms 再 Step | 首次只完成一个逻辑笔画并停在下一笔 Paused 起始；第二次零修改；第三次最多再完成一个笔画；无动作队列 |
+| 最后一笔 | 必须先观察 `Rlast(0)` 和至少一个 partial；推进到 990 后再 10 ms | 仅此时进入 Completed；Completed 后任意 Tick 均 no-op |
+| 单笔字 | 对“一”执行 5 秒迟到 callback | 仍是第一笔 partial，而不是直接 Completed；证明策略不是只对多笔字有效 |
+
+建议 harness 使用一个 `Snapshot{state,current,in_gap,progress,completed_count}`，每次成功 helper 调用后记录一项，再对任意相邻 snapshot 做通用 invariant 检查。这样未来新增字形或调整时长时，不只依赖几个手写终态断言。
+
+## 5. 现有测试中与新要求冲突的断言
+
+### 明确应删除或改写的 strict catch-up 断言
+
+- `scripts/tests/stroke_order_controller_harness.cc:186-195` 明确要求单次 `Tick(1160)` 穿过完整笔画+gap，`Tick(1260)` 还把 100 ms carry 到下一笔。
+- `scripts/tests/stroke_order_controller_harness.cc:232-249` 明确要求单次 delayed tick 穿过两笔两 gap，且 `4000`/`0xFFFFFFFF` 直接完成 glyph。
+- `scripts/tests/stroke_order_ui_fence_harness.cc:151-161` 明确要求 Pause settlement 跨过 gap 并推进下一笔 140‰。
+- `scripts/tests/stroke_order_ui_fence_harness.cc:163-175` 使用 2160 ms、2160999 µs 和 `UINT64_MAX`，要求 Pause settlement 直接完成 glyph。
+- `main/stroke_order/stroke_order_ui_action.h:33-44` 的 `UINT32_MAX` clamp 及注释也体现旧的“迟到仍全量追赶”策略。
+
+### 可保留意图、但应改为多个 visible tick 的测试
+
+- `scripts/tests/stroke_order_controller_harness.cc:143-150,171-185` 的 999+1 ms、gap 159+1 ms 边界意图有价值；若 Controller 自身承担量子 clamp，应改成多个 `<=33 ms` visible tick，而不是一次 999 ms 调用。
+- `scripts/tests/stroke_order_ui_fence_harness.cc:94-131` 的 Pause、fraction 和精确边界覆盖有价值，但其中 250/350/399 ms 单次 settlement 应拆成正常 cadence。
+- `scripts/tests/stroke_order_ui_fence_harness.cc:218-229` 对 `<1 ms` remainder、相同/倒退 timestamp 的覆盖仍有价值；微秒 fraction carry 不等于会跳笔的毫秒 backlog。
+
+`test_stroke_interaction_systems.py:100-114` 已覆盖 pressed visual，`:116` 起检查没有声音/广域音频改造；这些符合 visual-only 决策，但没有证明逐笔动画。不得用 pressed-style 测试替代时序回归。
+
+## 6. clamp / discard / carry 策略风险
+
+| 策略 | 结论与风险 |
+|---|---|
+| 当前“消费全部 delta、多 phase carry” | **拒绝**；保持 wall-clock 赶进度，却直接复现跳笔投诉 |
+| 只 clamp 到 `UINT32_MAX` | **无效**；上限远大于任意 glyph 总时长 |
+| 只 clamp 到当前 phase 剩余量并丢 overflow | 可防跨多笔，但一次 5 秒迟到仍可把新笔从 0% 瞬间画到 100%，不满足 reveal partial frame |
+| 每次 clamp 到 33 ms，并把 baseline 更新到当前时间、丢弃超额整毫秒 | **推荐**；正常约 1 秒，stall 时变慢且无 backlog。代价是过载时动画明显延长，这是用户明确接受的优先级 |
+| clamp 后把超额存进 pending queue，未来每帧消费 | 不推荐；即使每 callback 只过一个边界，也会在系统恢复后持续超速追赶，形成 backlog burst；队列还带来有界性和 cancel/replay 清理风险 |
+| 完全丢掉任何“大”样本 | 安全但可能在持续负载下冻结；优于跳笔但不如 `min(delta,33)`，后者仍有前进 |
+| 仅在 `AnimationClock` clamp | production 当前可修复，但 public `Controller::Tick(large)` 仍是脚枪，旧测试继续鼓励错误语义；建议 Controller 也防御性限制单次可见量子，或把 unrestricted elapsed API 私有化并明确不可直接用于 render tick |
+| Pause 不做任何 settlement | 不跳笔，但会丢失最后一次正常小 tick 到点击之间的进度；更稳妥的是与 timer 共用同一个 **bounded** settlement，然后 Pause |
+
+还应保持现有 fence 语义：未准入回调不改变 controller/clock；被取消或 stale 的回调永不重放。但“保留 baseline 直到成功准入”之后，成功准入只能应用一个视觉量子并丢弃更老的未渲染整毫秒。
+
+## 7. 建议回归闭环
+
+1. 先加入第 3 节 5 秒 delayed callback 断言，确认当前版本因 Completed 而红。
+2. 更新 timer 与 Pause 共用的 bounded settlement，并删除/改写 strict catch-up 期望。
+3. 跑该单测至绿，再跑完整 `test_stroke_interaction_systems.py` 和 `test_stroke_order_ui.py`，确保 fence、debounce、Replay/Step、pressed visual 与无音频改造均未回归。
+4. 最后在 CoreS3 用“口”等三笔字做真机观察：每笔都应出现 accent partial 揭示，暂停/继续期间不跳笔；在高负载或人为延迟条件下允许变慢，但不得追赶爆发。真机步骤仍不可由 host 测试代替。
+
+- `StrokeOrderController::Tick()` currently loops over `remaining` and can consume multiple 1000 ms stroke phases and 160 ms gaps in one invocation (`main/stroke_order/stroke_order_controller.cc:380-438`).
+- `StrokeOrderAnimationClock::Settle()` passes the entire admitted wall-clock delta to `Tick`, clamped only at `UINT32_MAX` ms, and Pause uses that same settlement before changing state (`main/stroke_order/stroke_order_ui_action.h:32-45,115-129`).
+- The LVGL timer callback redraws exactly once after an admitted animation update, so intermediate controller states crossed within that update cannot be rendered (`main/stroke_order/stroke_order_view.cc:1439-1461`).
+- Existing controller tests explicitly require multi-phase carry and huge-delta completion at `scripts/tests/stroke_order_controller_harness.cc:186-195,232-249`.
+- Existing pause-clock tests explicitly require a Pause settlement to cross a gap or complete the glyph for huge deltas at `scripts/tests/stroke_order_ui_fence_harness.cc:151-175`.
+- The current visual-only tests cover LVGL pressed styling and absence of audio feedback, but do not assert sequential animation snapshots (`scripts/tests/test_stroke_interaction_systems.py:100-116`).
+- The existing smoke fixture already contains 一, 人, and 口; the UI-fence Fixture selects two-stroke 人, which is sufficient for a deterministic 5-second delayed-callback regression without LVGL or ESP-IDF.
+
+<!-- pi-squad:f6d0f3e746ed08c5f706103c287fa2ffdddf80c0969ebb5239763a53ab6f7fe5 -->
+## 2026-09-13T09:38:37.227Z — stroke-animation-speed-test-plan
+
+# Stroke animation speed regression plan
+
+## Read-only scope
+
+Static audit only: no files changed, tests run, code compiled, or firmware built. Inspected `stroke_order_controller.{h,cc}`, `stroke_order_ui_action.h`, LVGL timer wiring in `stroke_order_view.cc`, both C++ harnesses, Python runners, and `docs/stroke-order-interaction-improvements.md`.
+
+## Diagnosis
+
+The current 33 ms constant has two roles:
+
+- `kTickMs == 33` schedules the LVGL timer.
+- `StrokeOrderAnimationClock::Settle()` caps elapsed credit to 33 ms.
+- `StrokeOrderController::Tick()` independently caps again to 33 ms.
+
+Thus continuously slower callbacks lose real time on every callback, not only after a stall:
+
+| Cadence | Current credit/callback | Predicted 1000 ms reveal wall time |
+|---:|---:|---:|
+| 33 ms | 33 ms | 1023 ms |
+| 50 ms | 33 ms | 1550 ms |
+| 100 ms | 33 ms | 3100 ms |
+| 150 ms | 33 ms | 4650 ms |
+
+The regression must exercise both clamps. Raising only the clock cap leaves the controller clamp; changing `kTickMs` itself would also reduce the production timer from about 30 FPS to 6.7 FPS.
+
+## Cap recommendation
+
+Separate scheduling from elapsed credit:
+
+- Keep timer period 33 ms (`kTimerPeriodMs`, or retain `kTickMs` only for scheduling).
+- Add `kMaxAnimationCreditMs = 150`.
+- Apply that cap in both `Settle()` and defensive public `Tick()`.
+- Keep rebasing each admitted sample, retain only sub-ms remainder, and discard all older whole-ms backlog.
+- Assert `kMaxAnimationCreditMs < kGapMs` and `< kStrokeDurationMs`.
+
+The maximum integer cap satisfying the required strict `<160 ms gap` rule is **159 ms**. The useful range for a 150 ms continuing cadence is 150–159; recommend **150 ms** for a 10 ms margin. A reveal-ending callback can then put at most 149 ms into the gap, leaving a visible gap snapshot; a gap-ending callback can put at most 149 ms into the next reveal, which remains partial.
+
+| Cap | Wall at 33/50/100/150 ms cadence | 5 s stall credit | Minimum partial states at cap-sized updates |
+|---:|---|---:|---:|
+| 33 current | 1023/1550/3100/4650 ms | 33 ms | 30 |
+| 100 | 1023/1000/1000/1500 ms | 100 ms | 9 |
+| **150 recommended** | **1023/1000/1000/1050 ms** | **150 ms** | **6** |
+| 159 maximum | 1023/1000/1000/1050 ms | 159 ms | 6 |
+
+A “partial state” is a controller/LVGL presentation opportunity with `0 < progress < 1000`, not proof of a physical panel flush.
+
+## Fast deterministic production-shaped test
+
+Add `TestCadenceSpeedRegression()` to `scripts/tests/stroke_order_ui_fence_harness.cc`. Reuse its real `Fixture`, `StrokeOrderApplyAnimationTick`, animation clock, controller, session, and coordinator. Use synthetic `now_us`; no sleeps and no duplicate timing model.
+
+### 1. One-stroke cadence matrix
+
+For each cadence `{33, 50, 100, 150}` ms:
+
+1. Use 一 (`0x4E00`), select at fixed `start_us`, then call `TickUs(now += cadence*1000)` until Completed.
+2. Count post-callback partial states.
+3. Assert the first callback credits the full cadence (`progress == cadence`), proving reduced FPS is not treated as a stall.
+4. Assert:
+
+```cpp
+const uint64_t expected =
+    ((StrokeOrderController::kStrokeDurationMs + cadence - 1U) / cadence) * cadence;
+assert(wall_ms == expected);
+assert(wall_ms >= 1000U && wall_ms <= 1000U + cadence);
+```
+
+| Cadence | Exact wall time | Exact partial states |
+|---:|---:|---:|
+| 33 | 1023 ms | 30 |
+| 50 | 1000 ms | 19 |
+| 100 | 1000 ms | 9 |
+| 150 | 1050 ms | 6 |
+
+Partial count is `(1000-1)/cadence` for this start-at-zero single stroke.
+
+### 2. Three-stroke matrix
+
+Run 口 at every cadence through the same helper. For every callback capture existing `Snapshot` before/after and require:
+
+- phase ordinal is monotonic and increases by at most one;
+- only `R(i)->G(i)`, `G(i)->R(i+1)`, or final `R->Completed` may cross a boundary;
+- completed count increases by at most one;
+- every stroke has a recorded partial state before completion;
+- every non-final stroke has at least one post-callback `in_gap()` snapshot before the next index appears;
+- no direct `R(i)->R(i+1)`;
+- uninterrupted total wall time is `ceil((3*1000+2*160)/cadence)*cadence`: 3333/3350/3400/3450 ms.
+
+Update `AssertAdjacent` to bound progress by the new credit cap, not the 33 ms timer period.
+
+### 3. Adversarial 5 s stall
+
+With 人 or 口 and 150 ms callbacks:
+
+1. Six callbacks reach first-stroke progress 900.
+2. Advance one callback by 5000 ms. With cap 150, require `completed 0->1`, same stroke index 0, and `in_gap()==true`; it must not enter stroke 1.
+3. Call again at the same timestamp: no state/progress change, proving no debt.
+4. Add 150 ms: 110 ms finishes the gap and stroke 1 becomes partial at progress 40; only `G(0)->R(1)` occurs.
+5. Continue to completion and retain all partial/gap assertions.
+6. Separately stall 5 s from progress zero: result must be stroke 0 progress 150, baseline rebased to the stalled timestamp, with no later repayment.
+
+The 5 s stall may lengthen wall time, but never skips a stroke.
+
+### 4. Pause/Resume and fence
+
+Retain the existing real coordinator-contention cases, changing only cap-derived numbers:
+
+- rejected timer/Pause admission leaves baseline, remainder, controller, session, and click arming unchanged;
+- admitted Pause after a miss settles at most 150 ms inside the same admission and then pauses;
+- Resume is idempotent, starts a fresh baseline, carries only the sub-ms active fraction, and excludes paused wall time;
+- fence-first Pause/Resume/timer remains mutation-free;
+- action-first still linearizes before a later fence;
+- Replay resets timing; Step keeps debounce and no queue.
+
+## Exact red assertion and commands
+
+New exact red assertion:
+
+```cpp
+assert(wall_ms ==
+       ((StrokeOrderController::kStrokeDurationMs + cadence - 1U) / cadence) * cadence);
+```
+
+At 50 ms cadence, static analysis predicts current `wall_ms == 1550` versus expected `1000`. `assert(first.progress == cadence)` also predicts current `33 != 50`.
+
+Focused command after adding the test:
+
+```bash
+python3 -m unittest discover -s scripts/tests \
+  -p 'test_stroke_interaction_systems.py' \
+  -k sequential_clock_pause_boundaries_and_overflow_ubsan -v
+```
+
+Then both sanitizer paths, affected controller test, and full suite:
+
+```bash
+python3 -m unittest discover -s scripts/tests -p 'test_stroke_interaction_systems.py' -v
+python3 -m unittest discover -s scripts/tests -p 'test_stroke_order_ui.py' \
+  -k controller_state_idempotent_cancel_and_glyph_direction -v
+python3 -m unittest discover -s scripts/tests -v
+```
+
+Commands were not run.
+
+## Existing assertion audit
+
+### `stroke_order_ui_fence_harness.cc`
+
+- `AssertAdjacent()` currently uses `kTickMs`. After splitting constants, its exact first stale assertion is:
+
+```cpp
+assert(after.progress - before.progress <= StrokeOrderController::kTickMs);
+```
+
+A delayed settlement can now move 150, so both this bound and the next-stroke `< kTickMs` bound must use the new cap.
+- `TestDelayedSequentialRegression`: progress 283 becomes 400 (`250 + cap`); wording “one 33ms quantum” becomes “one bounded credit.” `done=0->0` remains.
+- `TestSequentialMatrix`: 5 s progress `33`, then `66`, same-time `66`, and overflow `33` become `150`, `183`, `183`, and `150`. Keep baseline/remainder and equal/backwards checks.
+- Rewrite its first gap-stall block around the explicit 900 + 5 s sequence rather than retaining the 33-ms-derived progress 23.
+- `TestPauseClock` cap-coupled updates:
+  - delayed admitted Pause 283 -> 400;
+  - change post-resume advance 715399 us -> 598399 us to preserve the 998->999->gap fraction sequence;
+  - from progress 990, a 60 ms admitted Pause leaves 50 ms in gap, so 136299 us -> 109299 us preserves the later `+1 us` boundary assertion;
+  - long missed-Pause next-stroke progress 23 -> 140;
+  - contention-then-Pause 283 -> 400.
+  Rejected fence/session-stale cases remaining at 250 must not change.
+- Existing cadence coverage is only 33 ms plus an enormous delay; add 50/100/150 and explicit 5 s cases.
+- Keep Python expectations `mode=N done=0->0`; add a new cadence PASS marker assertion.
+
+### `stroke_order_controller_harness.cc`
+
+- Keep `AdvanceVisible()` at 33 ms; it models normal presentation cadence.
+- Oversized public `Tick()` expected 33/66/66 becomes 150/183/183, preferably derived from constants.
+- Rewrite near-boundary huge-delta checks: from progress 990, cap 150 yields gap credit 140; +19 leaves gap 159; the next oversized tick crosses only into next-stroke progress 149. Update following paused/resumed 23/56 expectations accordingly.
+- Repeated huge ticks over 口 currently require 101 settlements. Total credited time is `3*1000+2*160=3320`; cap 150 requires 23. Derive `ceil(total/cap)` and retain partial-before-completion checks.
+- Add constant assertions: reveal 1000, gap 160, timer 33, credit cap 150, cap `< gap`.
+
+### Documentation
+
+Update `docs/stroke-order-interaction-improvements.md` references to `min(elapsed,kTickMs)==33`, delayed 33->66, `<=33 ms` boundaries, and progress 283. Document separate 33 ms scheduling and 150 ms credit cap without weakening no-debt, partial-frame, adjacency, Pause, or fence guarantees.
+
+## Acceptance thresholds
+
+- Constants: reveal 1000 ms; gap 160 ms; timer 33 ms; recommended cap 150 ms and hard cap `<160` (maximum 159).
+- Exact one-stroke wall matrix: 1023/1000/1000/1050 ms. General limit: not before 1000 ms and no later than one callback interval after it.
+- Exact partial states: 30/19/9/6; same values are hard minima for arbitrary multi-stroke boundary alignment. At cap 159, minimum remains six.
+- Every non-final gap gets at least one post-callback gap snapshot.
+- Phase and completed-count deltas are each 0 or 1 only.
+- A 5 s callback credits no more than 150 ms, rebases, leaves no debt, and skips no stroke.
+- Existing Pause/Resume idempotence, replay, step debounce, exact-session admission, try-lock miss behavior, and fence-first mutation-free rejection stay green under UBSAN and TSAN.
+
+Residual risk: host state snapshots do not prove LCD flushes. CoreS3 should confirm six partial states at 150 ms cadence and every gap remain perceptible under load while nominal 33 ms scheduling remains intact.
+
+- The slowdown is caused by independent 33 ms caps in the production animation clock and controller Tick; changing only one cannot fix reduced-FPS timing.
+- The same `kTickMs == 33` also drives the LVGL timer period, so it cannot be changed to 150 without reducing scheduled FPS.
+- The production seam already rebases admitted samples, discards whole-ms backlog, preserves only sub-ms remainder, and gates timer/Pause mutation by exact session and cancel fence.
+- Reveal duration is 1000 ms and gap is 160 ms; the largest integer cap strictly below the gap is 159 ms.
+- Existing interaction tests cover stalls, contention, Pause fractions, timestamp anomalies, partial frames, adjacency, and fences, but not continuous 50/100/150 ms cadence.
+- Current tests/docs contain 33-ms-derived expectations such as 283, 33/66, and 101 huge-tick settlements.
+
+<!-- pi-squad:79f3e68a3f865067d06ab90cb061bfbccc97e2b176ef1bb8b90d23a5caa212a7 -->
+## 2026-09-13T10:57:07.887Z — stroke-complexity-speed-test-plan
+
+# Adaptive StrokeOrder speed — regression and acceptance test plan
+
+## 1. Read-only findings
+
+The current policy is fixed in `main/stroke_order/stroke_order_controller.h/.cc`:
+
+- reveal credit per stroke: `kStrokeDurationMs = 1000`
+- inter-stroke gap: `kGapMs = 160`
+- maximum credit per admitted presentation: `kMaxAnimationAdvanceMs = 150`
+- requested timer period: 33 ms
+- `StrokeDurationLocked()` returns 1000 for every valid stroke, independent of character complexity.
+
+Existing tests deliberately lock this behavior. `stroke_order_controller_harness.cc` asserts 1000 ms, 999 permille after 999 credited ms, and at least six partial snapshots. `stroke_order_ui_fence_harness.cc::AssertAdjacent` also compares a **permille** change to the 150 ms credit cap; that comparison is valid only while duration is exactly 1000 ms and must not survive an adaptive policy unchanged.
+
+### Exact count for 顺
+
+`顺` is **9 strokes** in the checked-in 2000-character prototype:
+
+- `scripts/tests/fixtures/stroke_order/prototype_2000/stroke_order.cov.json`: U+987A, official rank 1559, shard 6, record size 3608, `stroke_count: 9`.
+- `selection-2000.csv` and `charset-2000.txt` place it at rank 1559.
+- `runtime.json` maps fixture `so06.sob1` byte-for-byte to runtime `so06.bin`; `package_stroke_order_2000.py::COPY_MAP` performs that copy without conversion.
+
+Thus the fixture and packaged runtime representation both identify 顺 as 9 strokes, assuming the already checked hashes/package mapping. No current test makes this character-specific assertion; add both a Python SOB1 decode assertion and a C++ catalog/shard controller assertion for U+987A. I did not execute the decoder in this read-only task.
+
+Under the current fixed policy, 顺 has `9*1000 + 8*160 = 10,280 ms` credited duration. Completion is about 10.300 s at exact 30 Hz and 11.500 s at calibrated 6 Hz (69 admitted callbacks), explaining why it feels slow.
+
+## 2. Proposed deterministic policy
+
+Use a whole-character target which **includes gaps**, rather than a reveal-only target:
+
+```text
+N      = validated stroke count, 1..48
+T      = 6000 ms target total credited duration
+G      = 160 ms gap
+Q      = 150 ms maximum credit per presentation
+Dmin   = 301 ms
+Dmax   = 1000 ms
+Gtotal = (N - 1) * G
+raw    = Dmin, if Gtotal >= T
+         ceil((T - Gtotal) / N), otherwise
+D(N)   = clamp(raw, Dmin, Dmax)
+C(N)   = N * D(N) + (N - 1) * G
+```
+
+Use the same `D(N)` for every stroke of one loaded glyph; do not vary it by median length. Recompute only when a new glyph is loaded/replayed, never during playback.
+
+Rationale:
+
+- `Dmax=1000` keeps one- to five-stroke characters naturally short and never pads them to six seconds.
+- `Dmin=301` is deliberately greater than `2*Q`. Even at worst-case capped delivery, every automatically played stroke has at least **two positive partial presentation snapshots** before completion.
+- `Q < G` and `Q < Dmin` preserve the one-boundary-per-update proof.
+- Ceiling division prevents an unclamped target from becoming shorter than requested because of truncation.
+- The 48-stroke maximum is intentionally governed by visibility, not by pretending six seconds is possible. With 47 fixed 160 ms gaps and two partial snapshots per stroke, a short universal cap is mathematically incompatible with strict visibility.
+
+## 3. Required deterministic matrix for the recommended 6 s target
+
+Use exact rational timestamps `ceil(frame*1,000,000/fps)` and count only successfully admitted settlements. “Partial” means `!in_gap`, not completed, and `0 < progress < 1000`. The partial counts below are conservative lower bounds using a 150 ms maximum increment at 6 Hz and 34 ms maximum increment at rational 30 Hz.
+
+| strokes N | D ms | credited C ms | 6 Hz frames / wall | 30 Hz frames / wall | min partials per stroke, 6/30 Hz |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 1000 | 1000 | 7 / 1.166667 s | 30 / 1.000000 s | 6 / 29 |
+| 2 | 1000 | 2160 | 15 / 2.500000 s | 65 / 2.166667 s | 6 / 29 |
+| 3 | 1000 | 3320 | 23 / 3.833334 s | 100 / 3.333334 s | 6 / 29 |
+| 5 | 1000 | 5640 | 38 / 6.333334 s | 170 / 5.666667 s | 6 / 29 |
+| 9 (顺) | 525 | 6005 | 41 / 6.833334 s | 181 / 6.033334 s | 3 / 15 |
+| 15 | 301 | 6755 | 46 / 7.666667 s | 203 / 6.766667 s | 2 / 8 |
+| 24 | 301 | 10904 | 73 / 12.166667 s | 328 / 10.933334 s | 2 / 8 |
+| 48 | 301 | 21968 | 147 / 24.500000 s | 660 / 22.000000 s | 2 / 8 |
+
+At the production 33 ms request cadence (~30.3 Hz), expected wall times are respectively 1.023, 2.178, 3.333, 5.643, 6.006, 6.765, 10.923, and 21.978 s. Test both rational 30 Hz and fixed 33 ms so the product label and actual timer request cannot drift apart.
+
+`C(N)` is the exact maximum credited duration for uninterrupted automatic playback. There is no finite universal wall-clock maximum under arbitrary callback stalls, lock misses, or user pause: the accepted safety policy discards backlog rather than catching up. Wall limits above apply when every scheduled presentation is admitted. Hardware acceptance should separately flag missed admissions; excluding user-paused time, use table value + one cadence interval as the maximum.
+
+## 4. 4 s vs 6 s vs 8 s targets
+
+The same formula gives:
+
+| target | N=5: D/C | 顺 N=9: D/C | N=15: D/C | 顺 wall at 30/6 Hz |
+|---:|---:|---:|---:|---:|
+| 4 s | 672 / 4000 | 303 / 4007 | 301 / 6755 | 4.033 / 4.500 s |
+| 6 s | 1000 / 5640 | 525 / 6005 | 301 / 6755 | 6.033 / 6.833 s |
+| 8 s | 1000 / 5640 | 747 / 8003 | 384 / 8000 | 8.033 / 9.000 s |
+
+For N=24 and 48 all three targets hit the visibility floor, yielding 10,904 and 21,968 ms credited. Recommendation: **6 s**. Four seconds drives 顺 almost to the minimum visual allowance and may look rushed; eight seconds still takes 9 s at degraded cadence and only modestly improves the current complaint. Six seconds reduces 顺 by about 42% at 30 Hz while retaining at least three partial snapshots per stroke at 6 Hz.
+
+## 5. Exact red assertion against today’s fixed-1000 policy
+
+For 顺 under the recommended formula, before playback starts set the animation clock baseline, then inject exact 6 Hz timestamps:
+
+```text
+after frame 40 (6.000000 s):
+  state == Animating
+  current_stroke == 8
+  completed_stroke_count == 8
+  !in_gap
+  progress_permille == 990
+
+after frame 41 (6.833334 s):
+  state == Completed
+  completed_stroke_count == 9
+```
+
+This is a genuine red test today. Forty capped callbacks provide 6000 ms credit; fixed-1000 playback is only 200 ms into stroke index 5 after five reveals/gaps, and frame 41 still cannot complete the glyph. Add the equivalent rational-30-Hz assertion: frame 180 is the same final 990-permille state and frame 181 completes.
+
+Remove/replace the existing assertion `kStrokeDurationMs == 1000`; it is an obsolete implementation lock, not an adaptive acceptance criterion.
+
+## 6. Sequential visibility and gap assertions
+
+For every N/cadence row and every admitted automatic settlement:
+
+1. Define observable phase as `2*current_stroke + (in_gap || Completed ? 1 : 0)`.
+2. Assert phase is monotonic and advances by at most one; `completed_stroke_count` increases by at most one; automatic playback never jumps an index.
+3. For each stroke, record at least `floor((D-1)/max_credit_at_cadence)` positive partial snapshots: the matrix bounds above must hold.
+4. Every non-final stroke must produce at least one separately presented `in_gap=true`, progress=1000 snapshot before the next stroke appears. The final stroke goes directly to Completed and has no gap.
+5. A 5-second or `UINT64_MAX` delayed sample still credits at most 150 ms and crosses at most one adjacent boundary. Equal/backward timestamps credit zero and preserve fractional remainder.
+6. Replace the current invalid “permille delta <= 150” assertion. Either expose credited elapsed under `STROKE_ORDER_TESTING`, or bound permille using the selected duration and integer rounding.
+7. Retain a render/presentation call after every admitted snapshot. State tests prove presentation opportunities, not physical LCD flush; CoreS3 video/manual review must verify that the accent and gap are actually visible despite LVGL coalescing and the light reference outline.
+
+## 7. Pause, Resume, Step, Replay acceptance
+
+Run these at reveal start, mid-reveal, 1 ms before reveal completion, in gap, just before gap completion, and final stroke:
+
+- **Pause:** settles at most one 150 ms quantum in the same admission, then freezes stroke/index/progress/gap and fractional microseconds. It may complete only the final partial stroke; otherwise it becomes Paused. A lock miss or stale/cancel-fenced action changes nothing.
+- **Resume:** controller `Resume()` remains idempotent; paused wall time is excluded, baseline restarts at the admitted timestamp, and the same `D(N)` continues with no debt.
+- **Step:** one admitted action increases completed count by exactly one (or reaches Completed), then pauses at the next stroke with zero progress. From a gap it completes the next not-yet-drawn stroke; this explicit manual action is exempt from automatic gap/partial-frame requirements. The 120 ms debounce rejects repeats without queueing or mutation.
+- **Replay:** from Animating, Paused, or Completed resets to stroke 0/progress 0/no gap, clears clock debt/remainder, and uses the same count-derived duration. Repeated replay remains safe/idempotent in outcome.
+- Back/Exit and cancel-fence tests remain mutation-free for stale actions and must cancel timing immediately.
+
+## 8. Test construction and placement
+
+- Add a pure duration-policy test over counts `1,2,3,5,9,15,24,48`, plus invalid 0 and >48 rejection.
+- Extend `stroke_order_ui_fence_harness.cc` with generated valid SOB1 glyphs containing exactly those counts. The checked-in 2000-character corpus tops out at 10 strokes, so 15/24/48 require synthetic bounded data; repeat a valid minimal outline/median because this test targets timing, not glyph accuracy.
+- Add `test_stroke_order_2000.py` assertions that Python decodes U+987A from `so06.sob1` to 9 strokes and coverage agrees. Extend the sharded C++ harness to load U+987A through catalog/shard 6 and assert controller `stroke_count()==9`.
+- For each matrix row run rational 6 Hz, rational 30 Hz, fixed 33 ms, 5-second stalls, equal/backward time, and `UINT64_MAX`. Bound loops from computed expected frames (`K+2`), not the existing small magic limit; 48 strokes needs 147 callbacks at 6 Hz.
+- Preserve TSAN/UBSAN coordinator, pause, stale-session, contention, visual-button, and no-audio tests.
+
+## 9. Integer and overflow rules
+
+- Validate `1 <= N <= 48` before evaluating `N-1`.
+- Calculate gap, target subtraction, multiplication, and total in `uint64_t`; branch when `Gtotal >= T` to avoid unsigned underflow.
+- Implement ceiling as `q + (remainder != 0)`, not `(numerator + denominator - 1)/denominator`.
+- Compute expected callback counts similarly without additive overflow.
+- Keep all time tests in integer microseconds; avoid floating point. Generate rational cadence timestamps with checked quotient/remainder arithmetic if generalized beyond this small matrix.
+- Change the compile-time safety proof to `Q < Dmin && Q < G`, not `Q < fixed duration`.
+- Compute permille with a 64-bit product before division even though the proposed 1000 ms cap currently fits 32 bits.
+
+## 10. Validation status
+
+This task was read-only. I inspected source, tests, fixture metadata, and packaging mappings; I did **not** run Python tests, compile harnesses, decode binaries dynamically, build firmware, or perform CoreS3 hardware timing. Those executions remain required before acceptance.
+
+- The current controller uses a fixed 1000 ms reveal, 160 ms gap, 150 ms maximum credited settlement, and a 33 ms requested timer period; duration does not depend on loaded stroke count.
+- The checked-in prototype metadata identifies 顺 (U+987A) as official rank 1559, shard 6, record size 3608, with exactly 9 strokes.
+- The runtime package copies `so06.sob1` to `so06.bin` without transforming its SOB1 contents, so the fixture/runtime stroke count for 顺 is the same when package integrity holds.
+- Current fixed timing makes 顺 10,280 ms credited, approximately 10.300 s at exact 30 Hz and 11.500 s at calibrated 6 Hz.
+- Existing adjacency tests equate millisecond credit with permille progress; that equivalence depends on the fixed 1000 ms duration and is invalid for adaptive durations.
+- The checked-in first-2000 corpus test reports a maximum of 10 strokes, so 15-, 24-, and 48-stroke timing boundaries need synthetic valid SOB1 fixtures.
+- Arbitrary callback stalls have no finite wall-duration bound because the clock intentionally caps credit and discards backlog to prevent skipped strokes.
+
+<!-- pi-squad:05580b3a6ae7b9d2815410fb0c7a8af0efd1c7602382e45815f1797889eabac2 -->
+## 2026-09-13T13:16:11.736Z — stroke-first-cue-visibility-test-plan
+
+# Stroke first-cue visibility：独立审计与测试计划
+
+## 结论：REJECTED
+
+真机报告与当前源码顺序一致。当前实现不满足指定不变量：Candidate 虽先把 controller 置为 cue0，但动画时钟在 cue0 获得 LVGL 刷新机会前已经开始计时；若首个成功准入的 timer callback 延迟至少 150 ms，它可直接把 stroke0 变成完整轮廓/间隔，起笔标记可能从未提交到屏幕。
+
+本次仅静态读取源码和测试；**未修改文件，未运行命令、测试、编译、构建或烧录，也未观察屏幕。**
+
+## 1. 证据与根因
+
+### 1.1 首个 callback 当前可以完成 stroke0
+
+`main/stroke_order/stroke_order_ui_action.h` 中：
+
+- Candidate 成功后执行 `clock.Reset()`，随后立即 `clock.Sync(Animating, action_time)`；
+- `Settle()` 计算从 `last_tick_us_` 起的真实 elapsed，最多给 `controller.Tick()` 160 ms；
+- cue 时长为 150 ms（`kStartCueDurationMs=150`），单次上限为 160 ms。
+
+所以首个准入 callback 只要晚到 ≥150 ms，多笔字就进入 stroke0 的 full-contour/gap，一笔字则直接 Completed。
+
+### 1.2 实际 Candidate 页面先启动 clock/timer，后画 cue0
+
+`main/stroke_order/stroke_order_view.cc` 当前顺序为：
+
+1. `CandidateClicked()` 准入 Candidate action；
+2. `HandleStatePresentationLocked()` 调用 `RenderAnimationPage()`；
+3. `RenderAnimationPage()` 先 `StopAnimTimer()`，再次重置 clock；
+4. 创建 canvas/controls；
+5. `SyncAnimTimer()` 先启动 clock 并创建/恢复 33 ms timer；
+6. 最后才 `RedrawCanvas()`。
+
+因此页面构造和首帧绘制耗时也会计入首个 elapsed。Replay 在已有 canvas 上同样先通过 action 启动新 clock，再由 control handler 刷新 cue0；RetryLoad 和 Back 后的新 Candidate 会重建页面并重复上述顺序。
+
+LVGL click/timer callback 在同一 LVGL task 串行，故没有回调内并发数据竞争；但这不保证 dirty canvas 在下一次 due animation callback 改写它之前已刷新。
+
+### 1.3 Canvas 完成不等于物理可见
+
+`RedrawCanvas()` 的绘制语义本身正确：浅色完整参照、深色已完成笔画、active/non-gap 仅在 `median[0]` 画半径 5 的强调色起笔点，最后调用 `lv_canvas_finish_layer()`。但 StrokeOrder 路径没有显式 `lv_obj_invalidate`、`lv_refr_now`、refresh-ready 或 flush-complete 观测。
+
+依赖锁定为 LVGL 9.5.0、`esp_lvgl_port` 2.8.0~1；CoreS3 使用共享 `SpiLcdDisplay` 的 partial、single-buffer 路径。静态源码只能证明 canvas 被修改/finish，不能证明何时到达 ILI9342 面板。
+
+### 1.4 后续笔画的 phase 边界已有正确基础
+
+`StrokeOrderController::Tick()` 只消费调用开始时的 phase：cue 完成后进入 gap 并返回；gap 完成后进入下一笔 cue0 并返回；overflow 丢弃。因此后续笔画已有“一个 callback 不跨两个 phase”的保障。缺口只在第一笔没有前一 callback 作为 cue0 presentation turn。
+
+## 2. 现有测试为何未发现
+
+`scripts/tests/stroke_order_ui_fence_harness.cc` 不执行 View/LVGL：
+
+- `VerifyPlayback()` 直接令 `cue[0]=true`，注释称 Candidate 已同步 redraw；但 `Fixture::ApplyUs()` 只调用生产 action helper，并未调用 View/canvas。
+- `TestStartCueSnapRegression()` 明确期望第一次 160 ms callback 完成 stroke0；九笔字总计期望 17 个边界 callback，没有初始 arm-only callback。
+- `TestSequentialMatrix()` 也期望首个延迟 5 秒的 callback 完成 stroke0。
+- Python 的 `test_lvgl_admits_before_disarm_render_or_abort` 只是源码字符串检查；只检查 `RenderAnimationPage` 含 `RedrawCanvas()`，没有检查它相对 timer arm 的顺序，更没有刷新/flush 证据。
+
+若采用一次初始 arm-only callback，相关 golden 必须有意更新。例如九笔 saturated 情况应由 17 次变 18 次；33 ms 情况由 85 次变 86 次。应由独立 phase oracle 推导，不能仅修改到测试变绿。
+
+## 3. 精确不变量
+
+定义 **fresh playback epoch**：成功的 Candidate（包括 Back 后重新选字）、Replay（来自 Animating/Paused/Completed）或成功 RetryLoad。
+
+cue0 的外部可观察状态为：
+
+```text
+state=Animating
+current_stroke=0
+completed_stroke_count=0
+in_gap=false
+current_progress_permille=0
+```
+
+必须满足：
+
+1. action 在现有 generation/session/cancel-fence 准入内原子建立 cue0。
+2. View 绘制并 finish/invalidate cue0，且在普通 elapsed credit 生效前把控制权交还 LVGL scheduler。
+3. 该 epoch 的**首个成功准入** animation callback 只 arm/rebase（等价于零 credit）；即使晚到数秒，cue0 完全不变。
+4. 因 coordinator contention、stale generation/session 或 cancel fence 被拒绝的 callback，不得消费 pending token、改变 baseline/remainder 或 controller。
+5. 只有后续成功准入 callback 可累计 active time 并完成 stroke0。
+6. gap→下一笔 cue0 的 callback 不得同时完成新笔；现有 controller 已满足。
+7. 手动 Step 是明确例外：用户动作可跨恰好一个 cue/gap 边界并进入 Paused，但不得跨两个边界或排队。
+
+推荐生产 clock 使用显式 `presentation_pending`/`needs_first_admission`。第一次成功 settlement 记录 `last_tick_us_=now`、清除旧 remainder，且不调用 `Tick`。不能用把 160 降为 149 或测试专用 delay 代替。
+
+## 4. 必须保持的交互语义
+
+- **Replay：** 回到 cue0，清 step debounce、旧 elapsed/remainder，并创建新 presentation token；旧 timer 即使已 due 也不能绕过。
+- **Back→新 Candidate：** 旧 timer 删除；同字或不同字的新选择均获得新 token/cue0，旧 glyph 时间不可泄漏。
+- **RetryLoad：** 失败保持 Error 且无 timer；成功等同 fresh Candidate。
+- **Resume：** paused wall time不计入。若 token 已消费，继续当前 cue/gap，只能完成该 phase；若 Pause 发生在 token 消费前，token 必须跨 Pause/Resume 保留，首个 timer callback 仍只 arm。
+- **Pause：** 已 arm 时可结算但最多跨当前 phase；pending 时不得自动完成 stroke0。
+- **Step：** cue→本笔 full/gap 后 Paused；gap→下一笔 cue0 后 Paused；成功 Step 丢弃 timer debt/fraction，拒绝/防抖 Step 零变化。
+- **Fence：** token 必须在 `TryUiAction` 的同一临界区内改变；旧/fenced timer 不能 arm 新 epoch。
+
+## 5. 确定性 host 测试
+
+### 5.1 必须先红的 delayed-first-callback 回归
+
+在现有 C++ harness 增加专门 mode，复用真实 controller/session/coordinator/clock/action helper：
+
+1. `t0=1,000,000 us` 选择二笔字，断言 exact cue0。
+2. 真正持有 coordinator mutex，在 `t0+5 s` 尝试 tick；断言 rejected，clock/controller snapshot 完全不变。
+3. 释放 contention，在同一延迟时间成功准入 tick。
+4. 仍须 exact cue0；baseline 为该延迟时间，remainder 无旧债。
+5. same-time/backward-time tick 不推进。
+6. 后续 149,999 us 尚未完成；再 1 us 才允许进入 stroke0 gap。
+
+当前代码会在步骤 3 完成 stroke0，因此该测试应先红。
+
+### 5.2 Fresh-epoch matrix
+
+对以下入口复用 `AssertFirstAdmissionIsCueOnly`：
+
+- 初次 Candidate；
+- Animating、Paused、Completed 三种状态的 Replay；
+- Back 后选择第二个 Candidate；
+- Error 后成功 RetryLoad；
+- token 尚 pending 时的 Pause/Resume。
+
+另测普通已 arm 的 partial cue：Pause→长等待→Resume 不计 paused time，保留亚毫秒 remainder，不重置笔画。
+
+### 5.3 后续笔画、Pause/Step/fence
+
+二笔或九笔字按序断言：首个 delayed callback 仍 cue0；下一 saturated callback 只进入 stroke0 full/gap；再下一只进入 stroke1 cue0；再下一才可完成 stroke1。保留现有 Step cue/gap、防抖、final stroke、contention 和 cancel-fence snapshot 测试。把 `VerifyPlayback` 的“假定 cue[0] 已显示”改为显式初始 arm presentation。
+
+### 5.4 实现后的建议命令（本次未运行）
+
+```bash
+PYTHONPATH=scripts/tests python3 -m unittest -v \
+  test_stroke_interaction_systems.StrokeInteractionTest.test_delayed_first_admission_preserves_cue0 \
+  test_stroke_interaction_systems.StrokeInteractionTest.test_fresh_epoch_cue_gate_matrix \
+  test_stroke_interaction_systems.StrokeInteractionTest.test_lvgl_first_cue_source_wiring
+
+python3 -m unittest discover -s scripts/tests -p 'test_stroke_interaction_systems.py' -v
+python3 -m unittest discover -s scripts/tests -v
+```
+
+## 6. Source wiring 与 LVGL seam
+
+### Source-wiring guard
+
+增强现有 Python 源码检查，证明：fresh actions 使用被 harness 执行的 pending-clock 路径；Candidate page 和已有 canvas 的 Replay 都先 finalize cue0，再允许 elapsed；`AnimTimerCb` 只调用一次生产 admission helper 并在准入后 redraw；View 无直接 `controller_->Tick` 或复制的 elapsed 算术；cue 路径确实执行 `lv_canvas_finish_layer` 或显式 invalidate。源码解析只作 wiring guard，不能当 LVGL 执行证据。
+
+### Native LVGL harness
+
+增加 off-screen LVGL 9.5.0 测试：使用确定性 `lv_tick_set_cb`、memory display 和调用 `lv_display_flush_ready` 的 fake flush callback；由**同一生产 presentation/timer seam**驱动，不复制算法。用不同像素签名标记 cue0/full0。模拟 Candidate 后把 fake time 跳数秒，只执行一个 `lv_timer_handler()` turn；flush log 必须先出现 cue0，且 full0 只能在后续 admitted timer turn 出现。这同时验证 `lv_canvas_finish_layer` 的 invalidation 假设及 LVGL timer/refresh 排序。
+
+## 7. 是否需要 `lv_refr_now`/flush ack
+
+**首轮窄修不建议要求 `lv_refr_now`。** arm-only 首 callback 加 finish/invalidate 会让 cue0 在正常 33 ms 调度下稳定经过多个 LVGL turn，直到累计约 150 ms active time；比在 click callback 内强制同步刷新更安全。
+
+`lv_refr_now` 可能在 LVGL task 内增加 partial SPI 刷新延迟，且异步 port 下仍不等于玻璃像素已可见；flush-ready 也只证明 LVGL/驱动传输完成。若 native LVGL 或 CoreS3 复测仍失败，再考虑按该 cue invalidation 的 refresh-ready/flush-complete 事件 arm；若最终使用 `lv_refr_now`，须在现有 LVGL lock 内、timer arm 前调用，并测量回调时延/WDT。物理可见性最终仍需真机视频。
+
+## 8. 验收标准
+
+1. delayed-first 测试在旧代码红、修复后绿。
+2. 每个 fresh epoch 的首个 admitted callback 无论延迟多久都不改变 cue0。
+3. rejected/stale/fenced callback 保持 token、baseline、remainder、session、controller 全不变。
+4. 后续每 callback 最多跨一个 phase；“顺”九个起笔点各有独立 presentation turn。
+5. Replay/new Candidate/RetryLoad 正确重置；Resume 排除暂停时间；Pause/Step/debounce/final completion 契约不回归。
+6. source-wiring 与 LVGL 9.5 flush-order harness 通过。
+7. 全量 host tests 通过；随后用 ESP-IDF 6.0.2 clean build `m5stack/core-s3` / `m5stack-core-s3`，并明确核实 `CONFIG_STROKE_ORDER_LOCAL=y`。
+8. CoreS3 以 ≥30 fps 录制 Candidate、Replay、Back→新 Candidate、Retry：每条路径至少一帧显示强调色起笔点且无 stroke0 深色完整轮廓，随后才出现完整轮廓；同时实测 Pause/Resume/Step/cancel。
+9. 若真机仍失败，不得仅凭 `lv_canvas_finish_layer`、`lv_refr_now` 或 host flush callback 宣称通过。
+
+## 剩余风险
+
+- 时序修复不能解决强调色对比度、起点被浅色参照遮蔽或面板颜色问题。
+- Candidate/Retry 重建中的 `StopAnimTimer()` 可能误清 token；Replay 也可能被旧 timer 复用。
+- timing golden 会增加一次初始 callback，必须重新推导。
+- 强制 refresh/flush wait 可能给 CoreS3 partial SPI 路径引入 UI 延迟或 WDT 风险。
+- Host LVGL 仍不能取代最终真机可见性验证。
+
+- 当前动画 clock 在首个 cue0 获得刷新保证前启动；150 ms cue 配合 160 ms 单 callback 上限，使首个 admitted callback 足以完成 stroke0。
+- `RenderAnimationPage()` 当前先 `SyncAnimTimer()` 后 `RedrawCanvas()`，且其中 `StopAnimTimer()` 会重置 Candidate action 已建立的 clock；Replay 也先启动新 clock 后 redraw。
+- `RedrawCanvas()` 的 active stroke 仅绘制 `median[0]` 半径 5 起笔点并调用 `lv_canvas_finish_layer()`；StrokeOrder 没有显式 refresh/flush receipt。
+- 现有 C++ host harness 不执行 View/LVGL，并明确期望首个 saturated callback 完成 stroke0，因而把缺陷写进了 oracle。
+- 当前解析依赖锁定为 LVGL 9.5.0 和 `esp_lvgl_port` 2.8.0~1；CoreS3 使用 partial、single-buffer SPI LVGL 路径。
+- Controller 已确保单次 Tick 不同时消费 cue+gap 或 gap+下一 cue；初始 cue 缺少 presentation turn 是独立缺口。

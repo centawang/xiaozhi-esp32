@@ -86,3 +86,53 @@ Lead 和 Tester 执行任务时统一使用 gpt-5.6-sol 模型，thinking level 
 ## User directive — 2026-09-12T16:34:52.504Z
 
 用户要求在其离线期间持续多轮迭代，将笔划功能扩展为可直接烧录的 M5Stack CoreS3 常见 2000 字技术原型版本；未决问题继续采用协调者推荐，必须完成实现、审查、测试、clean build、烧录包与硬件残余风险说明后再停止。
+
+<!-- pi-squad:34f23dfda7bd175f734c11839777ad50815d0330a611ae142cf04751cd44db92 -->
+## User directive — 2026-09-13T00:26:50.311Z
+
+用户要求改进笔划功能：每一笔的动画绘制时长固定为 1 秒（笔间短暂停顿可独立保留）；笔划界面的有效触控按钮需提供一次短促声音反馈；笔划动画播放过程中必须允许触摸操作按钮，包括暂停/继续、逐笔、重播、返回和退出。实现须保持按钮幂等、防抖且不建立无界动作队列。
+
+<!-- pi-squad:58631391a23158febbc2f9e4facb9afed624a0f73b9e22c11a750c6d0a632fc0 -->
+## User directive — 2026-09-13T03:08:44.937Z
+
+用户授权向当前 Squad 新增 Systems 工程师，用于继续修复被锁定的 stroke-order-interaction-improvements artifact。Systems 必须使用 gpt-6-astra 模型，thinking level 为 high。
+
+<!-- pi-squad:e68579bcfd75255976f1eec0321f1e12e613b407f6704eb80dcb53910e3a9e74 -->
+## User directive — 2026-09-13T04:30:19.432Z
+
+用户选择笔划交互改进方案 B：保留每笔固定 1 秒、动画中触控和 cancel-fence 安全；声音反馈收窄为 M5Stack CoreS3 best-effort，仅在音频输出/语音管线空闲且可安全接纳时播放短提示音，TTS、采集、播放或其他音频繁忙时允许静默跳过。回退与此功能无关的通用 AudioService、AudioEngine、AFE、wake-word 和跨板卡 codec shutdown/I/O 改造，优先保持补丁窄小和其他板卡行为不变。用户同意按该方案新增 Runtime writer，模型使用 gpt-6-astra:high。
+
+<!-- pi-squad:d0b9bf05e33a789dc9928a011d5d9ad9d22c580bb0d7e6e29c868b50147879e4 -->
+## User directive — 2026-09-13T04:31:21.370Z
+
+用户撤销笔划触控声音反馈需求：最终方案不要任何提示音。保留每笔固定 1 秒、动画播放过程中允许暂停/继续/逐笔/重播/返回/退出，以及 cancel-fence 下旧触控不改变状态。必须回退为提示音引入的 Application 音频事件、AudioService、AudioEngine/AFE/wake-word、AudioCodec/NoAudio/PDM/direct-I2S 和跨板卡修改，使最终补丁不包含声音反馈或通用音频生命周期改造。此指令取代此前 CoreS3 best-effort 提示音方案。
+
+<!-- pi-squad:dc0dc7f59970a7dceab01ba6a5a7234645ee1436ed73ba590656909c302bd8e1 -->
+## User directive — 2026-09-13T04:31:53.007Z
+
+用户进一步明确最终笔划交互方案：不要任何声音反馈，改为按钮视觉提示。触摸候选字和演示控制按钮时，应通过 LVGL pressed/active 样式提供清晰但短暂的颜色、亮度或边框变化；优先使用 LVGL 内建按下状态，不新增声音、音频队列或无界动作/计时队列。保留每笔固定 1 秒、动画中按钮可操作、幂等/防抖和 cancel-fence 下旧触控不改变状态。此指令取代此前所有提示音或 best-effort 声音方案。
+
+<!-- pi-squad:e5468fb46b4677c12fe08332473d2ba95b0dcdb1521b7edaeb708724a70e6cb7 -->
+## User directive — 2026-09-13T05:17:26.635Z
+
+用户授权新增 Animation 工程师，模型使用 gpt-6-astra:high，仅修复 visual-only 笔划版本中 timer try-lock miss 后 Pause 丢失 pending elapsed 的问题；不得重新引入声音或扩大 Application/audio/跨板卡范围。
+
+<!-- pi-squad:9e2eb599e9d792d2831ca08097d5d498ac16d75a00236bc69e0fdc4944c1fa8e -->
+## User directive — 2026-09-13T05:57:41.450Z
+
+用户真机反馈：当前笔划动画不是清晰的一笔一笔播放。用户取消“严格每笔必须恰好 1 秒”的硬要求，新的最高优先级是笔顺必须逐笔可见，不能因延迟回调或 elapsed 追赶而在一次更新中跨过/跳过多个笔画；每笔动画时长尽量约 1 秒，系统延迟时允许变长，宁可变慢也不能跳笔。保留动画中触控、视觉按下反馈和 cancel-fence 安全。此指令取代此前严格固定 1000 ms 的硬实时解释。
+
+<!-- pi-squad:5fde4e6d885e5917faab4f029fd431060238efa2b9f4b8c2c1d5452271c8a360 -->
+## User directive — 2026-09-13T11:01:24.516Z
+
+用户选择复杂字自适应播放方案 B：以“顺”完整播放约 6 秒为目标。保持严格逐笔顺序、150 ms 最大推进、160 ms 笔间隔和无 backlog；按整字笔画数缩短单笔时长，推荐 1–7 笔约 600 ms、8 笔约 560 ms、9 笔以上约 480 ms，使“顺”预计约 6.3 秒，并保证每笔至少 3 个正进度渐进帧。
+
+<!-- pi-squad:4215f6c8844521affc2b700731e99c9e11325c4376cb31f0a9205a93aec3cd5b -->
+## User directive — 2026-09-13T11:31:55.608Z
+
+用户接受进一步加速的推荐方案：在严格逐笔、不跳笔前提下，将“顺”目标缩短到约 5 秒。保持150 ms最大推进、160 ms笔间隔和无 backlog；自适应时长建议为1–7笔500 ms、8笔422 ms、9笔357 ms、10笔306 ms、11笔以上最低301 ms。最短单笔时长必须大于2×150 ms，以保证每笔完成前至少两个正进度渐进帧。
+
+<!-- pi-squad:4b689fc969ad2365d577608ff1c880b9923d174d213f6cc636fc723474851f13 -->
+## User directive — 2026-09-13T12:15:07.507Z
+
+用户接受笔划动画的进一步简化：每一笔先显示起笔位置，然后省略中间渐进绘制过程，直接显示完整笔画；之后进入笔间隔，再显示下一笔起笔位置。硬约束仍是严格按笔顺、不能跳笔；建议起笔提示约150ms、笔间隔约160ms，不新增声音。

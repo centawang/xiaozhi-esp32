@@ -133,6 +133,38 @@ public:
     uint64_t PublishCurrentCancelFence();
     bool HasCancelFence(uint64_t generation) const;
 
+    enum class UiTransition : uint8_t { None, Playback, Candidates };
+
+    // UI holds the display lock before trying this lock. Never wait or invoke
+    // Application/coordinator methods from mutate. The successful mutation and
+    // phase change linearize together against PublishCancelFence. No heap/copy
+    // or deferred action queue is needed; contention rejects silently.
+    template <typename Mutate>
+    bool TryUiAction(uint64_t generation, UiTransition transition, uint64_t now_ms,
+                     Mutate&& mutate) {
+        std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            return false;
+        }
+        if (generation == 0 || generation != generation_ || !IsActivePhase(phase_) ||
+            CancelFenceRaisedLocked(generation) ||
+            (transition == UiTransition::Playback && phase_ != Phase::Candidates) ||
+            (transition == UiTransition::Candidates && phase_ != Phase::LocalPlayback &&
+             phase_ != Phase::Candidates)) {
+            return false;
+        }
+        if (!mutate()) {
+            return false;
+        }
+        if (transition != UiTransition::None) {
+            phase_ =
+                transition == UiTransition::Playback ? Phase::LocalPlayback : Phase::Candidates;
+            candidates_started_ms_ = transition == UiTransition::Candidates ? now_ms : 0;
+            ++route_epoch_;
+        }
+        return true;
+    }
+
     RouteSnapshot CaptureRoute(MessageKind kind, const char* session_id, size_t session_id_size,
                                bool session_id_valid) const;
     bool CommitStrokeStt(const RouteSnapshot& snapshot);

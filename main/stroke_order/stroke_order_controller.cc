@@ -41,17 +41,6 @@ private:
     bool acquired_ = false;
 };
 
-uint32_t ApproxLength(StrokeOrderStore::Point a, StrokeOrderStore::Point b) {
-    const int32_t dx = static_cast<int32_t>(a.x) - static_cast<int32_t>(b.x);
-    const int32_t dy = static_cast<int32_t>(a.y) - static_cast<int32_t>(b.y);
-    const int32_t adx = dx < 0 ? -dx : dx;
-    const int32_t ady = dy < 0 ? -dy : dy;
-    if (adx > ady) {
-        return static_cast<uint32_t>(adx + (ady / 2));
-    }
-    return static_cast<uint32_t>(ady + (adx / 2));
-}
-
 }  // namespace
 
 StrokeOrderController& StrokeOrderController::GetInstance() {
@@ -318,32 +307,31 @@ bool StrokeOrderController::StepForward(uint64_t monotonic_ms) {
         (monotonic_ms < last_step_ms_ || monotonic_ms - last_step_ms_ < kStepDebounceMs)) {
         return false;
     }
-    has_last_step_ms_ = true;
-    last_step_ms_ = monotonic_ms;
-    if (loaded_glyph_.empty()) {
+    // Invalid indices/final gaps cannot be produced by playback. Reject them
+    // without consuming debounce or wrapping an index into a different stroke.
+    if (loaded_glyph_.empty() || current_stroke_ >= loaded_glyph_.size() ||
+        (in_gap_ && current_stroke_ + 1U >= loaded_glyph_.size())) {
         return false;
     }
+    has_last_step_ms_ = true;
+    last_step_ms_ = monotonic_ms;
+    gap_elapsed_ms_ = 0;
     if (in_gap_) {
+        // Finish ONLY the gap: the next start cue needs its own presentation.
         in_gap_ = false;
-        gap_elapsed_ms_ = 0;
         current_stroke_ = static_cast<uint16_t>(current_stroke_ + 1);
-        if (current_stroke_ >= loaded_glyph_.size()) {
-            current_stroke_ = static_cast<uint16_t>(loaded_glyph_.size() - 1);
-            stroke_elapsed_ms_ = StrokeDurationLocked(current_stroke_);
-            state_ = StrokeOrderUiState::Completed;
-            return true;
-        }
-    }
-    stroke_elapsed_ms_ = StrokeDurationLocked(current_stroke_);
-    if (current_stroke_ + 1 >= loaded_glyph_.size()) {
-        state_ = StrokeOrderUiState::Completed;
-        in_gap_ = false;
+        stroke_elapsed_ms_ = 0;
+        state_ = StrokeOrderUiState::Paused;
         return true;
     }
-    in_gap_ = false;
-    gap_elapsed_ms_ = 0;
-    current_stroke_ = static_cast<uint16_t>(current_stroke_ + 1);
-    stroke_elapsed_ms_ = 0;
+    // Finish ONLY this cue: keep its full contour/gap visible until another
+    // accepted action or resumed timer turn. The final cue has no trailing gap.
+    stroke_elapsed_ms_ = StrokeDurationLocked(current_stroke_);
+    if (current_stroke_ + 1U >= loaded_glyph_.size()) {
+        state_ = StrokeOrderUiState::Completed;
+        return true;
+    }
+    in_gap_ = true;
     state_ = StrokeOrderUiState::Paused;
     return true;
 }
@@ -397,34 +385,45 @@ void StrokeOrderController::Tick(uint32_t dt_ms) {
         state_ = StrokeOrderUiState::Error;
         return;
     }
+
+    // Only settle the phase present when this call began. Even a saturated
+    // sample cannot consume any of the newly entered phase: every stroke's
+    // start cue and completed contour/gap get separate presentation turns.
+    const uint32_t credit = dt_ms > kMaxAnimationAdvanceMs ? kMaxAnimationAdvanceMs : dt_ms;
+    if (credit == 0) {
+        return;
+    }
     if (in_gap_) {
-        gap_elapsed_ms_ += dt_ms;
-        if (gap_elapsed_ms_ < kGapMs) {
+        const uint32_t need = kGapMs - gap_elapsed_ms_;
+        if (credit < need) {
+            gap_elapsed_ms_ += credit;
             return;
         }
         in_gap_ = false;
         gap_elapsed_ms_ = 0;
         current_stroke_ = static_cast<uint16_t>(current_stroke_ + 1);
         stroke_elapsed_ms_ = 0;
-        if (current_stroke_ >= loaded_glyph_.size()) {
-            current_stroke_ = static_cast<uint16_t>(loaded_glyph_.size() - 1);
-            stroke_elapsed_ms_ = StrokeDurationLocked(current_stroke_);
-            state_ = StrokeOrderUiState::Completed;
-        }
+        return;  // Present the next start cue at zero; discard gap overflow.
+    }
+
+    const uint32_t duration = StrokeDurationLocked(current_stroke_);
+    if (duration == 0) {
+        state_ = StrokeOrderUiState::Error;
         return;
     }
-    stroke_elapsed_ms_ += dt_ms;
-    const uint32_t duration = StrokeDurationLocked(current_stroke_);
-    if (stroke_elapsed_ms_ < duration) {
+    const uint32_t need = duration - stroke_elapsed_ms_;
+    if (credit < need) {
+        stroke_elapsed_ms_ += credit;
         return;
     }
     stroke_elapsed_ms_ = duration;
-    if (current_stroke_ + 1 >= loaded_glyph_.size()) {
+    if (current_stroke_ + 1U >= loaded_glyph_.size()) {
         state_ = StrokeOrderUiState::Completed;
         return;
     }
     in_gap_ = true;
     gap_elapsed_ms_ = 0;
+    // Present this full stroke. No cue overflow is credited to the gap.
 }
 
 void StrokeOrderController::Shutdown() {
@@ -525,11 +524,11 @@ uint32_t StrokeOrderController::current_progress_permille() const {
     if (duration == 0) {
         return 0;
     }
-    uint32_t permille = (stroke_elapsed_ms_ * kPermille) / duration;
+    uint64_t permille = (uint64_t{stroke_elapsed_ms_} * kPermille) / duration;
     if (permille > kPermille) {
         permille = kPermille;
     }
-    return permille;
+    return static_cast<uint32_t>(permille);
 }
 
 bool StrokeOrderController::in_gap() const {
@@ -761,29 +760,7 @@ void StrokeOrderController::ResetPlaybackLocked() {
 void StrokeOrderController::CancelPlaybackLocked() { ResetPlaybackLocked(); }
 
 uint32_t StrokeOrderController::StrokeDurationLocked(uint16_t index) const {
-    uint32_t length = MedianLengthLocked(index);
-    if (length < kMinStrokeMs) {
-        length = kMinStrokeMs;
-    }
-    if (length > kMaxStrokeMs) {
-        length = kMaxStrokeMs;
-    }
-    return length;
-}
-
-uint32_t StrokeOrderController::MedianLengthLocked(uint16_t index) const {
-    if (index >= loaded_glyph_.size() || loaded_glyph_[index].median.size() < 2) {
-        return kMinStrokeMs;
-    }
-    uint32_t length = 0;
-    const auto& median = loaded_glyph_[index].median;
-    StrokeOrderStore::Point previous{median[0].x, median[0].y};
-    for (size_t i = 1; i < median.size(); ++i) {
-        const StrokeOrderStore::Point point{median[i].x, median[i].y};
-        length += ApproxLength(previous, point);
-        previous = point;
-    }
-    return length;
+    return index < loaded_glyph_.size() ? kStartCueDurationMs : 0;
 }
 
 bool StrokeOrderController::OverlayOpenLocked() const {

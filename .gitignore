@@ -16,5 +16,7 @@ main/mmap_generate_emoji.h
 .cache
 *.pyc
 *.bin
+# Required SCB1 catalog for the checked-in, eight-shard CoreS3 prototype.
+!scripts/tests/fixtures/stroke_order/prototype_2000/stroke_cat.bin
 mmap_generate_*.h
 .clangd

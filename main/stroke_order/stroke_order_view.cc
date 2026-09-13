@@ -7,6 +7,7 @@
 #include "lvgl_theme.h"
 #include "stroke_order/stroke_order_assets.h"
 #include "stroke_order/stroke_order_parse.h"
+#include "stroke_order/stroke_order_ui_action.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -22,7 +23,6 @@ namespace {
 #if defined(HAVE_LVGL)
 constexpr int kGridInset = 12;
 constexpr int kOutlineWidth = 2;
-constexpr int kCurrentWidth = 4;
 constexpr int kMarkerRadius = 5;
 
 class AssetsStrokeOrderShardSource final : public StrokeOrderShardSource {
@@ -76,6 +76,14 @@ void StyleControl(lv_obj_t* obj, LvglTheme* theme) {
     lv_obj_set_style_bg_color(obj, theme->assistant_bubble_color(), 0);
     lv_obj_set_style_text_color(obj, theme->text_color(), 0);
     lv_obj_set_style_pad_all(obj, 0, 0);
+    // LVGL owns press/release feedback: no audio, deferred work or extra timer.
+    // Keep glyph/text contrast in both themes; the thicker accent border and
+    // tinted background are visible on candidate and playback-control buttons.
+    lv_obj_set_style_bg_color(
+        obj, lv_color_mix(theme->text_color(), theme->assistant_bubble_color(), LV_OPA_30),
+        LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(obj, theme->text_color(), LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(obj, 3, LV_STATE_PRESSED);
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
 }
@@ -401,20 +409,18 @@ void StrokeOrderView::ShowSpeechTimedOutFromMain() {
     if (display_ == nullptr || controller_ == nullptr) {
         return;
     }
-    DisplayLockGuard lock(display_);
-    if (!lock) {
-        return;
+    {
+        DisplayLockGuard lock(display_);
+        if (!lock) {
+            return;
+        }
+        // AbortRound already retired this generation. Do not create an inert
+        // generation-0 R/X page or weaken the active-round admission fence.
+        lifecycle_.SetDeviceIdle(true);
+        CancelSessionLocked(false);
     }
-    session_.Cancel();
-    presented_generation_ = 0;
-    lifecycle_.SetListenHold(false);
-    lifecycle_.SetDeviceIdle(true);
-    if (!lifecycle_.overlay_open()) {
-        lifecycle_.TryOpenOverlay();
-    }
-    if (!controller_->EnterTimedOut() || !EnsureOverlay() || !RenderTimedOut()) {
-        InvalidateVisualsLocked(false);
-    }
+    // ShowNotification takes its own display lock. Retry is a fresh SO click.
+    display_->ShowNotification("未听到汉字，请点击 SO 重试");
 #endif
 }
 
@@ -589,9 +595,12 @@ void StrokeOrderView::RequestAbortLocked(StrokeAbortReason reason) {
     Application::GetInstance().RequestAbortStrokeRound(generation, reason);
 }
 
-void StrokeOrderView::StopAnimTimer() {
+void StrokeOrderView::StopAnimTimer(bool reset_clock) {
     lv_timer_t* timer = anim_timer_;
     anim_timer_ = nullptr;
+    if (reset_clock) {
+        anim_clock_.Reset();
+    }
     if (timer != nullptr) {
         lv_timer_delete(timer);
     }
@@ -601,19 +610,21 @@ bool StrokeOrderView::SyncAnimTimer() {
     if (controller_ == nullptr) {
         return false;
     }
-    if (controller_->state() != StrokeOrderUiState::Animating) {
+    const auto state = controller_->state();
+    anim_clock_.Sync(state, static_cast<uint64_t>(esp_timer_get_time()));
+    if (state != StrokeOrderUiState::Animating) {
         if (anim_timer_ != nullptr) {
             lv_timer_pause(anim_timer_);
         }
         return true;
     }
     if (anim_timer_ == nullptr) {
-        anim_timer_ = lv_timer_create(AnimTimerCb, StrokeOrderController::kTickMs, this);
+        anim_timer_ = lv_timer_create(AnimTimerCb, StrokeOrderController::kTimerPeriodMs, this);
         if (anim_timer_ == nullptr) {
             return false;
         }
     }
-    lv_timer_set_period(anim_timer_, StrokeOrderController::kTickMs);
+    lv_timer_set_period(anim_timer_, StrokeOrderController::kTimerPeriodMs);
     lv_timer_resume(anim_timer_);
     return true;
 }
@@ -810,7 +821,9 @@ bool StrokeOrderView::RenderAnimationPage() {
     if (!CacheLoadedGlyph()) {
         return false;
     }
-    StopAnimTimer();
+    // Candidate/RetryLoad admission already established the fresh playback
+    // token. Rebuilding this page must not erase it (teardown still resets).
+    StopAnimTimer(false);
     lv_obj_clean(overlay_);
     showing_candidates_ = false;
     canvas_ = nullptr;
@@ -855,10 +868,12 @@ bool StrokeOrderView::RenderAnimationPage() {
         lv_obj_center(label);
         control_buttons_[i] = button;
     }
+    // Draw cue0 before starting the timer. Even if its first callback is late,
+    // the shared admission clock permits only another cue0 draw on that turn.
+    RedrawCanvas();
     if (!SyncAnimTimer()) {
         return false;
     }
-    RedrawCanvas();
     UpdateControlLabels();
     (void)th;
     return true;
@@ -976,8 +991,6 @@ bool StrokeOrderView::RenderAwaitingSpeech() { return RenderStatusPage("Speak", 
 
 bool StrokeOrderView::RenderNoMatch() { return RenderStatusPage("No match", true); }
 
-bool StrokeOrderView::RenderTimedOut() { return RenderStatusPage("Timeout", true); }
-
 bool StrokeOrderView::ApplyVoiceUtteranceLocked(uint64_t generation, const std::string& text) {
     if (!session_.AcceptStt(generation) || controller_ == nullptr || coordinator_ == nullptr ||
         !coordinator_->IsCurrentGeneration(generation)) {
@@ -1063,56 +1076,6 @@ void StrokeOrderView::DrawStrokeOutline(lv_layer_t* layer, const CachedStroke& s
     }
 }
 
-void StrokeOrderView::DrawMedianReveal(lv_layer_t* layer, const CachedStroke& stroke, int x, int y,
-                                       int size, uint32_t permille, lv_color_t color, int width) {
-    if (stroke.median.size() < 2) {
-        return;
-    }
-    const int inner = size - (2 * kGridInset);
-    const int origin_x = x + kGridInset;
-    const int origin_y = y + kGridInset;
-    uint32_t total = 0;
-    for (size_t i = 1; i < stroke.median.size(); ++i) {
-        const int32_t dx =
-            static_cast<int32_t>(stroke.median[i].x) - static_cast<int32_t>(stroke.median[i - 1].x);
-        const int32_t dy =
-            static_cast<int32_t>(stroke.median[i].y) - static_cast<int32_t>(stroke.median[i - 1].y);
-        const int32_t adx = dx < 0 ? -dx : dx;
-        const int32_t ady = dy < 0 ? -dy : dy;
-        total += static_cast<uint32_t>(adx > ady ? adx + ady / 2 : ady + adx / 2);
-    }
-    uint32_t remain = total * permille / 1000;
-    for (size_t i = 1; i < stroke.median.size(); ++i) {
-        const CachedPoint prev = stroke.median[i - 1];
-        const CachedPoint point = stroke.median[i];
-        const int32_t dx = static_cast<int32_t>(point.x) - static_cast<int32_t>(prev.x);
-        const int32_t dy = static_cast<int32_t>(point.y) - static_cast<int32_t>(prev.y);
-        const int32_t adx = dx < 0 ? -dx : dx;
-        const int32_t ady = dy < 0 ? -dy : dy;
-        const uint32_t seg = static_cast<uint32_t>(adx > ady ? adx + ady / 2 : ady + adx / 2);
-        if (remain == 0) {
-            break;
-        }
-        CachedPoint end = point;
-        if (seg > remain && seg > 0) {
-            end.x = static_cast<uint16_t>(prev.x + dx * static_cast<int32_t>(remain) /
-                                                       static_cast<int32_t>(seg));
-            end.y = static_cast<uint16_t>(prev.y + dy * static_cast<int32_t>(remain) /
-                                                       static_cast<int32_t>(seg));
-            remain = 0;
-        } else {
-            remain = seg > remain ? 0 : remain - seg;
-        }
-        DrawLine(layer, StrokeOrderLayout::Scale(prev.x, origin_x, inner),
-                 StrokeOrderLayout::Scale(prev.y, origin_y, inner),
-                 StrokeOrderLayout::Scale(end.x, origin_x, inner),
-                 StrokeOrderLayout::Scale(end.y, origin_y, inner), color, width);
-        if (remain == 0) {
-            break;
-        }
-    }
-}
-
 void StrokeOrderView::DrawStartMarker(lv_layer_t* layer, const CachedStroke& stroke, int x, int y,
                                       int size, lv_color_t color) {
     if (stroke.median.empty()) {
@@ -1158,7 +1121,6 @@ void StrokeOrderView::RedrawCanvas() {
     }
     const uint16_t current = controller_->current_stroke();
     const uint16_t completed = controller_->completed_stroke_count();
-    const uint32_t permille = controller_->current_progress_permille();
     const auto state = controller_->state();
     const lv_color_t reference = MixLight(theme->text_color(), theme->background_color());
     const lv_color_t done = theme->text_color();
@@ -1180,8 +1142,8 @@ void StrokeOrderView::RedrawCanvas() {
     }
     if ((state == StrokeOrderUiState::Animating || state == StrokeOrderUiState::Paused) &&
         current < strokes && !controller_->in_gap()) {
-        DrawMedianReveal(&layer, current_glyph_.strokes[current], 0, 0, tw, permille, accent,
-                         kCurrentWidth);
+        // The cue is the only active-stroke drawing; the full contour snaps
+        // into the completed pass after its hold. Never draw a partial median.
         DrawStartMarker(&layer, current_glyph_.strokes[current], 0, 0, tw, accent);
     }
     lv_canvas_finish_layer(canvas_, &layer);
@@ -1203,78 +1165,51 @@ void StrokeOrderView::UpdateControlLabels() {
     }
 }
 
-void StrokeOrderView::HandleControlLocked(uint32_t index) {
-    if (controller_ == nullptr || !lifecycle_.CanHandleOverlayAction()) {
-        RequestAbortLocked(StrokeAbortReason::UnexpectedState);
-        return;
+bool StrokeOrderView::HandleControlLocked(uint32_t index) {
+    if (controller_ == nullptr || coordinator_ == nullptr || !lifecycle_.CanHandleOverlayAction() ||
+        index >= StrokeOrderLayout::kControlCount) {
+        return false;
     }
-    if (index == 4) {
-        Application::GetInstance().RequestAbortStrokeRound(
-            coordinator_ != nullptr ? coordinator_->CurrentGeneration() : 0,
-            StrokeAbortReason::UserClose);
-        return;
+    if (index != 4 && Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+        return false;
     }
-    const auto ui = controller_->state();
+    static constexpr StrokeOrderUiAction actions[] = {
+        StrokeOrderUiAction::PauseContinue, StrokeOrderUiAction::Step, StrokeOrderUiAction::Replay,
+        StrokeOrderUiAction::Back, StrokeOrderUiAction::Exit};
+    auto action = actions[index];
     const auto voice = session_.phase();
-    if (index == 2 && ui == StrokeOrderUiState::Error &&
+    if (index == 2 && controller_->state() == StrokeOrderUiState::Error &&
         (voice == StrokeOrderVoicePhase::Candidates ||
-         voice == StrokeOrderVoicePhase::LocalPlayback ||
-         voice == StrokeOrderVoicePhase::Inactive)) {
-        controller_->RetryLoad();
+         voice == StrokeOrderVoicePhase::LocalPlayback)) {
+        action = StrokeOrderUiAction::RetryLoad;
+    } else if (index == 2 && (voice == StrokeOrderVoicePhase::NoMatch ||
+                              voice == StrokeOrderVoicePhase::TimedOut ||
+                              voice == StrokeOrderVoicePhase::Error)) {
+        action = StrokeOrderUiAction::RetryVoice;
+    }
+    const uint64_t generation = presented_generation_;
+    if (!StrokeOrderApplyUiAction(*coordinator_, *controller_, session_, anim_clock_, generation,
+                                  action, static_cast<uint64_t>(esp_timer_get_time()))) {
+        return false;
+    }
+    // Rendering may call out to Application on failure; do not hold coordinator
+    // mutex across it. A fence-first rejected action never reaches these effects.
+    // Replay uses the existing canvas: its admitted BeginPlayback token survives
+    // ordinary SyncAnimTimer, and this callback redraws cue0 before returning.
+    if (action == StrokeOrderUiAction::Exit) {
+        StopAnimTimer();
+    } else if (action != StrokeOrderUiAction::RetryVoice) {
         HandleStatePresentationLocked();
-        return;
-    }
-    if (index == 2 &&
-        (voice == StrokeOrderVoicePhase::NoMatch || voice == StrokeOrderVoicePhase::TimedOut ||
-         voice == StrokeOrderVoicePhase::Error || voice == StrokeOrderVoicePhase::Inactive)) {
-        if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
-            return;
-        }
-        Application::GetInstance().RequestStartStrokeRound(session_.generation());
-        return;
-    }
-    if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
-        RequestAbortLocked(StrokeAbortReason::UnexpectedState);
-        return;
-    }
-    bool changed = false;
-    switch (index) {
-        case 0:
-            if (controller_->state() == StrokeOrderUiState::Paused) {
-                changed = controller_->Resume();
-            } else {
-                changed = controller_->Pause();
-            }
-            break;
-        case 1:
-            changed = controller_->StepForward(static_cast<uint64_t>(esp_timer_get_time() / 1000));
-            break;
-        case 2:
-            changed = controller_->Replay();
-            break;
-        case 3:
-            changed = controller_->BackToCandidates();
-            if (changed) {
-                session_.MarkCandidates();
-                if (coordinator_ != nullptr) {
-                    coordinator_->MarkCandidates(
-                        session_.generation(), static_cast<uint64_t>(esp_timer_get_time() / 1000));
-                }
-                if (!EnsureOverlay() || !RenderCandidates()) {
-                    RequestAbortLocked(StrokeAbortReason::UnexpectedState);
-                }
-            }
-            return;
-        default:
-            break;
-    }
-    if (changed) {
         RedrawCanvas();
         UpdateControlLabels();
-        if (!SyncAnimTimer()) {
-            RequestAbortLocked(StrokeAbortReason::UnexpectedState);
-        }
     }
+    if (action == StrokeOrderUiAction::Exit) {
+        Application::GetInstance().RequestAbortStrokeRound(generation,
+                                                           StrokeAbortReason::UserClose);
+    } else if (action == StrokeOrderUiAction::RetryVoice) {
+        Application::GetInstance().RequestStartStrokeRound(generation);
+    }
+    return true;
 }
 
 void StrokeOrderView::HandleStatePresentationLocked() {
@@ -1341,7 +1276,6 @@ void StrokeOrderView::CandidateClicked(lv_event_t* event) {
     }
     if (!self->session_.IsCurrentGeneration(self->presented_generation_) ||
         self->coordinator_ == nullptr ||
-        !self->coordinator_->IsCurrentGeneration(self->presented_generation_) ||
         self->session_.phase() != StrokeOrderVoicePhase::Candidates ||
         self->controller_->state() != StrokeOrderUiState::Candidates) {
         return;
@@ -1351,10 +1285,13 @@ void StrokeOrderView::CandidateClicked(lv_event_t* event) {
         return;
     }
     const uint32_t select_index = self->candidate_select_ids_[display];
-    DisarmClick(target);
-    if (self->controller_->SelectCandidate(select_index)) {
-        self->session_.MarkLocalPlayback();
-        self->coordinator_->MarkLocalPlayback(self->presented_generation_);
+    const uint64_t generation = self->presented_generation_;
+    if (StrokeOrderApplyUiAction(*self->coordinator_, *self->controller_, self->session_,
+                                 self->anim_clock_, generation, StrokeOrderUiAction::Candidate,
+                                 static_cast<uint64_t>(esp_timer_get_time()), select_index)) {
+        // A transient coordinator try-lock miss must leave the button usable.
+        // Disarm only after admission, before rendering can delete this target.
+        DisarmClick(target);
         self->HandleStatePresentationLocked();
     }
 }
@@ -1370,7 +1307,11 @@ void StrokeOrderView::ControlClicked(lv_event_t* event) {
     if (index >= StrokeOrderLayout::kControlCount) {
         return;
     }
-    self->HandleControlLocked(index);
+    if (self->HandleControlLocked(index) && index == 4) {
+        // Exit stops animation but leaves deletion to the main-task abort.
+        // Benign lock contention must not permanently disable Exit.
+        DisarmClick(target);
+    }
 }
 
 void StrokeOrderView::OverlayDeleted(lv_event_t* event) {
@@ -1464,7 +1405,12 @@ void StrokeOrderView::AnimTimerCb(lv_timer_t* timer) {
         lv_timer_pause(timer);
         return;
     }
-    self->controller_->Tick(StrokeOrderController::kTickMs);
+    if (self->coordinator_ == nullptr ||
+        !StrokeOrderApplyAnimationTick(*self->coordinator_, *self->controller_, self->session_,
+                                       self->anim_clock_, self->presented_generation_,
+                                       static_cast<uint64_t>(esp_timer_get_time()))) {
+        return;
+    }
     self->RedrawCanvas();
     self->UpdateControlLabels();
     if (self->controller_->state() != StrokeOrderUiState::Animating) {

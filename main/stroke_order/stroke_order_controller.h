@@ -57,11 +57,14 @@ public:
         std::vector<DecodedPoint> median;
     };
 
-    static constexpr uint32_t kMinStrokeMs = 280;
-    static constexpr uint32_t kMaxStrokeMs = 900;
+    // Each stroke shows its start cue, then snaps to its full contour.
+    // Delays may lengthen these holds; never skip a cue to catch up.
+    static constexpr uint32_t kStartCueDurationMs = 150;
     static constexpr uint32_t kGapMs = 160;
     static constexpr uint32_t kStepDebounceMs = 120;
-    static constexpr uint32_t kTickMs = 33;
+    // Scheduling request and per-presentation credit are intentionally distinct.
+    static constexpr uint32_t kTimerPeriodMs = 33;
+    static constexpr uint32_t kMaxAnimationAdvanceMs = 160;
     static constexpr uint32_t kMaxCandidateInputs = 24;
     static constexpr uint32_t kRuntimeCharacterCount = 2000;
     static constexpr uint16_t kRuntimeShardCount = 8;
@@ -97,6 +100,8 @@ public:
     bool BackToCandidates();
     bool Exit();
     bool RetryLoad();
+    // One presentation: credit at most 160ms to ONLY the starting phase.
+    // Crossing a boundary discards surplus; the new phase must first be drawn.
     void Tick(uint32_t dt_ms);
     void Shutdown();
 
@@ -134,7 +139,6 @@ private:
     void ResetPlaybackLocked();
     void CancelPlaybackLocked();
     uint32_t StrokeDurationLocked(uint16_t index) const;
-    uint32_t MedianLengthLocked(uint16_t index) const;
     bool OverlayOpenLocked() const;
     bool PointInEntryLocked(int x, int y) const;
 

@@ -103,6 +103,59 @@
       ],
       "canWrite": false,
       "reviewer": true
+    },
+    {
+      "id": "systems",
+      "name": "Systems",
+      "role": "Systems engineer",
+      "expertise": [
+        "embedded C++",
+        "FreeRTOS task lifecycle",
+        "audio pipelines",
+        "concurrency and lock ordering",
+        "ESP-IDF",
+        "LVGL input synchronization",
+        "resource ownership",
+        "shutdown and restart safety"
+      ],
+      "canWrite": true,
+      "reviewer": false,
+      "model": "github-copilot/gpt-6-astra:high"
+    },
+    {
+      "id": "runtime",
+      "name": "Runtime",
+      "role": "Runtime engineer",
+      "expertise": [
+        "embedded C++",
+        "CoreS3 audio integration",
+        "LVGL event handling",
+        "bounded queues",
+        "generation fencing",
+        "feature-scope reduction",
+        "ESP-IDF build isolation",
+        "regression-safe refactoring"
+      ],
+      "canWrite": true,
+      "reviewer": false,
+      "model": "github-copilot/gpt-6-astra:high"
+    },
+    {
+      "id": "animation",
+      "name": "Animation",
+      "role": "Animation runtime engineer",
+      "expertise": [
+        "LVGL animation timing",
+        "monotonic clock accounting",
+        "embedded C++ state machines",
+        "concurrency linearization",
+        "generation fencing",
+        "deterministic timing tests",
+        "ESP-IDF CoreS3 validation"
+      ],
+      "canWrite": true,
+      "reviewer": false,
+      "model": "github-copilot/gpt-6-astra:high"
     }
   ]
 }
