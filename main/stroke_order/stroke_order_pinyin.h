@@ -54,8 +54,11 @@ public:
     static constexpr uint32_t kGroupIndexEntrySize = 8;
     static constexpr uint32_t kReadingSize = 2;
     static constexpr uint32_t kMemberSize = 8;
-    static constexpr uint32_t kMaxCharacters = 1024;
-    static constexpr uint32_t kMaxGroups = 1024;
+    // SPY1 is an unpublished prototype format. Corpus measurement for ranks
+    // 0001-2000 requires 2000 characters and 1047 groups; the byte layout is
+    // unchanged and remains bounded by the 64 KiB file limit.
+    static constexpr uint32_t kMaxCharacters = 2048;
+    static constexpr uint32_t kMaxGroups = 2048;
     static constexpr uint8_t kMaxReadingsPerCharacter = 8;
     static constexpr uint16_t kMaxGroupMembers = 32;
     static constexpr uint32_t kMaxFileBytes = 65536;

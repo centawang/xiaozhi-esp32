@@ -163,10 +163,10 @@ lines sorted by codepoint, each encoded as
 the manifest's `U+XXXX` spelling. `not_a_release_library` is always true for
 this prototype.
 
-## 500-character prototype pack
+## Legacy 500-character prototype pack
 
-`scripts/tests/fixtures/stroke_order/prototype_500/` is the offline pack consumed
-by CoreS3 firmware builds. Membership is 通用规范汉字表 一级字表 numbers 0001-0500.
+`scripts/tests/fixtures/stroke_order/prototype_500/` is retained as an offline
+compatibility fixture; CoreS3 firmware builds now consume the sharded 2000-character pack. Membership is 通用规范汉字表 一级字表 numbers 0001-0500.
 Official page: https://www.gov.cn/zwgk/2013-08/19/content_2469793.htm
 Official PDF: https://www.gov.cn/gzdt/att/att/site1/20130819/tygfhzb.pdf
 Official PDF SHA-256: `af85c706a53d3b3bbad818bcce7415ac9a2284ea14f79fe7f54ce1248a7bdac9`
@@ -190,9 +190,10 @@ License (`ARPHICPL.TXT`). The converter reads only `strokes`/`medians` JSON.
 Associated dictionary text may be LGPL or other copyleft terms and is **not**
 ingested. Pinyin readings come from Unicode 16.0.0 Unihan (`UNICODE-LICENSE.txt`).
 
-Firmware packaging copies this pack with `scripts/package_stroke_order_prototype.py`.
-Ordinary `idf.py` / `scripts/build.py` builds must not access the network or
-convert from a live hanzi-writer-data checkout. Extra-files include the mapped
+The retained legacy packager can copy this pack with
+`scripts/package_stroke_order_prototype.py`, but it is no longer selected by the
+CoreS3 CMake path. It remains offline and does not convert from a live
+hanzi-writer-data checkout. Its legacy extra-files include the mapped
 `stroke_order.bin`/`stroke_pinyin.bin`, selection, coverage, source locks,
 manifests, SHA256SUMS, APL, Unicode license, and NOTICE. The packager regenerates
 `SHA256SUMS` after runtime filename mapping; its 13 entries hash every other file
@@ -206,6 +207,71 @@ point and 1 MiB file limits still hold. The current prototype SOB1 is 1,046,788
 bytes (1,788 bytes under 1 MiB). Generation must fail if that limit would be
 exceeded; do not raise `MAX_FILE_BYTES` / `kMaxFileBytes`.
 
+## 2000-character sharded prototype and SCB1
+
+CoreS3 builds consume `scripts/tests/fixtures/stroke_order/prototype_2000/`.
+The source/audit fixture contains `selection-2000.csv`, `charset-2000.txt`, the
+pinned source lock, 2000/2000 coverage, eight per-shard manifests, SCB1, SPY1,
+licenses, NOTICE, and a closed `SHA256SUMS`. Ordinary firmware builds run only
+`scripts/package_stroke_order_2000.py`; they neither access HWD/Unihan/the PDF
+nor include `all.json`.
+
+Ranks are partitioned into fixed 250-character ranges and converted to unchanged
+SOB1 v1 files. The eight sizes are 443020, 603800, 680236, 723504, 771996,
+816964, 849284, and 911688 bytes (5,800,492 total), all below 1 MiB. Runtime
+assets use `so00.bin` through `so07.bin`.
+
+SCB1 v1 (`stroke_cat.bin`) is little-endian:
+
+```
+Header 32 bytes
+  u8  magic[4]          "SCB1"
+  u16 format_version    1
+  u16 shard_count       <= 16
+  u32 character_count   <= 2048
+  u32 entry_offset      32
+  u32 shard_offset      32 + character_count * 12
+  u32 total_shard_bytes
+  u32 header_crc32      CRC of bytes 0..23
+  u32 body_crc32        CRC of bytes 32..end
+
+Entry 12 bytes, strictly increasing codepoint
+  u32 codepoint
+  u16 official_rank
+  u8  shard_index
+  u8  reserved          0
+  u16 local_sob1_index
+  u16 reserved          0
+
+Shard descriptor 40 bytes
+  u8  asset_name[16]    ASCII, NUL-terminated and zero-padded
+  u32 exact_file_size   <= 1 MiB
+  u32 file_crc32
+  u32 character_count
+  u32 first_rank
+  u32 last_rank
+  u32 reserved          0
+```
+
+Catalog validation rejects noncanonical offsets, duplicate or missing ranks,
+duplicate codepoints/names/local indexes, inconsistent shard ranges, overflow,
+and trailing bytes. Runtime bind additionally CRC-checks and fully loads every
+SOB1 record and checks every catalog local index. The controller retains only an
+owned catalog, owned SPY1, and bounded decoded glyph caches. The shard-source
+API permits one acquired view at a time, every view is at most 1 MiB, and an
+RAII guard releases it before the Controller mutex is unlocked. Asset suspension
+clears the source reference and both metadata indexes synchronously before
+partition munmap. Rebind verifies every shard and requires SPY1 to contain the
+same 2000 codepoint/rank pairs as SCB1 before the SO entry can appear. See
+`docs/adr/0005-shard-local-stroke-order-2000.md`.
+
+Firmware packaging deliberately excludes the large per-character audit
+manifests, selection, charset, source lock, and coverage files. It includes only
+the eight shards, SCB1, SPY1, APL/Unicode licenses, NOTICE, compact
+`runtime.json`, and closed checksums. Asset generation rejects basename
+collisions or names over 31 bytes and requires at least 256 KiB free in the
+8 MiB partition.
+
 ## SPY1 pinyin index (`stroke_pinyin.bin`, version 1)
 
 Independent of SOB1. Magic `SPY1`. Little-endian. Header and body CRC-32/ISO-HDLC.
@@ -216,8 +282,8 @@ Header 32 bytes
   u8  magic[4]           "SPY1"
   u16 format_version     1
   u16 reserved           0
-  u32 char_count         <= 1024
-  u32 group_count        <= 1024
+  u32 char_count         <= 2048
+  u32 group_count        <= 2048
   u32 char_index_offset  32
   u32 group_index_offset
   u32 header_crc32       CRC of bytes 0..23
@@ -244,13 +310,19 @@ is reciprocal: every referenced group contains that character with the same
 rank, and every group member exists in the character index with the same rank
 and references that group.
 
-Limits: file <= 64 KiB, readings <= 8, group members <= 32. Offset/length math is
-unsigned-32 overflow checked. Input may be unaligned. Bind makes an owned copy.
-Corrupt or missing SPY1 must not unbind SOB1; candidates degrade to exact-only
-or the 一/人/口 fallback. MQTT local pages use TopRanked(6) intersected with the
-store when SPY1 is valid, without opening voice. WebSocket STT uses the pinyin
-provider after local parse, with the recognized character first, polyphone union,
-rank order, dedup, and max 6, still store-only/loadable.
+Limits: file <= 64 KiB, characters <= 2048, groups <= 2048, readings <= 8,
+group members <= 32. SPY1 was never a published format; the 2000-character
+upgrade raised the character/group validator bounds without changing the v1 byte
+layout. The measured corpus is 63,618 bytes, 1,047 groups, and at most 29 members
+in a group. Generation rejects rather than truncates a reading union or group.
+Offset/length math is unsigned-32 overflow checked. Input may be unaligned.
+Bind makes an owned copy. For the sharded 2000-character runtime pack, corrupt,
+missing, or catalog-mismatched SPY1 fails the complete asset binding transaction
+and hides SO; it does not leave an exact-only partial generation visible. MQTT
+local pages use `TopRanked(6)` intersected with the catalog without opening
+voice. WebSocket STT uses the pinyin provider after local parse, with the
+recognized character first, polyphone union, rank order, dedup, and max 6,
+still catalog-only/loadable.
 
 Readings are generated from Unicode 16.0.0 Unihan `kMandarin` (required) plus a
 safe `kHanyuPinyin` union. Tone marks become `a-z` plus a tone digit 1-5.

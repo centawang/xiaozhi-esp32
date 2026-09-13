@@ -1,0 +1,2055 @@
+{
+  "character_count": 250,
+  "characters": [
+    "丘",
+    "丛",
+    "丝",
+    "丢",
+    "主",
+    "乍",
+    "乎",
+    "乐",
+    "乒",
+    "乓",
+    "乔",
+    "亚",
+    "仔",
+    "他",
+    "仗",
+    "付",
+    "仙",
+    "代",
+    "令",
+    "仪",
+    "们",
+    "仰",
+    "仲",
+    "件",
+    "价",
+    "任",
+    "份",
+    "仿",
+    "企",
+    "伊",
+    "伍",
+    "伏",
+    "伐",
+    "休",
+    "众",
+    "优",
+    "伙",
+    "会",
+    "伞",
+    "伟",
+    "传",
+    "伤",
+    "伦",
+    "伪",
+    "似",
+    "兆",
+    "先",
+    "光",
+    "全",
+    "兰",
+    "共",
+    "冉",
+    "册",
+    "再",
+    "写",
+    "冬",
+    "冯",
+    "凹",
+    "出",
+    "刑",
+    "划",
+    "列",
+    "则",
+    "刚",
+    "创",
+    "加",
+    "务",
+    "劣",
+    "动",
+    "包",
+    "匆",
+    "匠",
+    "半",
+    "华",
+    "协",
+    "卯",
+    "印",
+    "危",
+    "压",
+    "厌",
+    "发",
+    "句",
+    "另",
+    "叨",
+    "叩",
+    "叫",
+    "召",
+    "台",
+    "司",
+    "叹",
+    "叼",
+    "叽",
+    "吁",
+    "吃",
+    "吆",
+    "合",
+    "吉",
+    "吊",
+    "同",
+    "后",
+    "吏",
+    "吐",
+    "向",
+    "吓",
+    "吕",
+    "吗",
+    "吸",
+    "囚",
+    "四",
+    "回",
+    "因",
+    "团",
+    "圣",
+    "在",
+    "地",
+    "场",
+    "圾",
+    "处",
+    "外",
+    "失",
+    "头",
+    "夷",
+    "夸",
+    "夹",
+    "夺",
+    "奴",
+    "奶",
+    "孕",
+    "存",
+    "宁",
+    "它",
+    "对",
+    "寺",
+    "尔",
+    "尖",
+    "尘",
+    "尧",
+    "尼",
+    "屹",
+    "屿",
+    "岁",
+    "岂",
+    "巩",
+    "市",
+    "帆",
+    "师",
+    "年",
+    "幼",
+    "延",
+    "廷",
+    "式",
+    "弗",
+    "弘",
+    "当",
+    "必",
+    "戌",
+    "戎",
+    "成",
+    "托",
+    "扛",
+    "扣",
+    "执",
+    "扩",
+    "扫",
+    "扬",
+    "斥",
+    "早",
+    "旬",
+    "曲",
+    "有",
+    "朱",
+    "朴",
+    "朵",
+    "机",
+    "朽",
+    "杀",
+    "杂",
+    "权",
+    "此",
+    "死",
+    "母",
+    "毕",
+    "民",
+    "永",
+    "汁",
+    "汇",
+    "汉",
+    "灰",
+    "爷",
+    "犯",
+    "玄",
+    "瓜",
+    "生",
+    "用",
+    "甩",
+    "白",
+    "百",
+    "皮",
+    "皿",
+    "矛",
+    "矢",
+    "礼",
+    "禾",
+    "穴",
+    "立",
+    "竹",
+    "纠",
+    "网",
+    "老",
+    "考",
+    "而",
+    "耳",
+    "肉",
+    "肋",
+    "肌",
+    "臣",
+    "自",
+    "至",
+    "臼",
+    "舌",
+    "舟",
+    "芋",
+    "芒",
+    "芝",
+    "虫",
+    "血",
+    "行",
+    "西",
+    "讨",
+    "让",
+    "训",
+    "议",
+    "讯",
+    "记",
+    "贞",
+    "轨",
+    "边",
+    "辽",
+    "达",
+    "迁",
+    "迂",
+    "迄",
+    "过",
+    "迈",
+    "邦",
+    "邪",
+    "闪",
+    "页",
+    "饥",
+    "鸟"
+  ],
+  "codepoints": [
+    "U+4E18",
+    "U+4E1B",
+    "U+4E1D",
+    "U+4E22",
+    "U+4E3B",
+    "U+4E4D",
+    "U+4E4E",
+    "U+4E50",
+    "U+4E52",
+    "U+4E53",
+    "U+4E54",
+    "U+4E9A",
+    "U+4ED4",
+    "U+4ED6",
+    "U+4ED7",
+    "U+4ED8",
+    "U+4ED9",
+    "U+4EE3",
+    "U+4EE4",
+    "U+4EEA",
+    "U+4EEC",
+    "U+4EF0",
+    "U+4EF2",
+    "U+4EF6",
+    "U+4EF7",
+    "U+4EFB",
+    "U+4EFD",
+    "U+4EFF",
+    "U+4F01",
+    "U+4F0A",
+    "U+4F0D",
+    "U+4F0F",
+    "U+4F10",
+    "U+4F11",
+    "U+4F17",
+    "U+4F18",
+    "U+4F19",
+    "U+4F1A",
+    "U+4F1E",
+    "U+4F1F",
+    "U+4F20",
+    "U+4F24",
+    "U+4F26",
+    "U+4F2A",
+    "U+4F3C",
+    "U+5146",
+    "U+5148",
+    "U+5149",
+    "U+5168",
+    "U+5170",
+    "U+5171",
+    "U+5189",
+    "U+518C",
+    "U+518D",
+    "U+5199",
+    "U+51AC",
+    "U+51AF",
+    "U+51F9",
+    "U+51FA",
+    "U+5211",
+    "U+5212",
+    "U+5217",
+    "U+5219",
+    "U+521A",
+    "U+521B",
+    "U+52A0",
+    "U+52A1",
+    "U+52A3",
+    "U+52A8",
+    "U+5305",
+    "U+5306",
+    "U+5320",
+    "U+534A",
+    "U+534E",
+    "U+534F",
+    "U+536F",
+    "U+5370",
+    "U+5371",
+    "U+538B",
+    "U+538C",
+    "U+53D1",
+    "U+53E5",
+    "U+53E6",
+    "U+53E8",
+    "U+53E9",
+    "U+53EB",
+    "U+53EC",
+    "U+53F0",
+    "U+53F8",
+    "U+53F9",
+    "U+53FC",
+    "U+53FD",
+    "U+5401",
+    "U+5403",
+    "U+5406",
+    "U+5408",
+    "U+5409",
+    "U+540A",
+    "U+540C",
+    "U+540E",
+    "U+540F",
+    "U+5410",
+    "U+5411",
+    "U+5413",
+    "U+5415",
+    "U+5417",
+    "U+5438",
+    "U+56DA",
+    "U+56DB",
+    "U+56DE",
+    "U+56E0",
+    "U+56E2",
+    "U+5723",
+    "U+5728",
+    "U+5730",
+    "U+573A",
+    "U+573E",
+    "U+5904",
+    "U+5916",
+    "U+5931",
+    "U+5934",
+    "U+5937",
+    "U+5938",
+    "U+5939",
+    "U+593A",
+    "U+5974",
+    "U+5976",
+    "U+5B55",
+    "U+5B58",
+    "U+5B81",
+    "U+5B83",
+    "U+5BF9",
+    "U+5BFA",
+    "U+5C14",
+    "U+5C16",
+    "U+5C18",
+    "U+5C27",
+    "U+5C3C",
+    "U+5C79",
+    "U+5C7F",
+    "U+5C81",
+    "U+5C82",
+    "U+5DE9",
+    "U+5E02",
+    "U+5E06",
+    "U+5E08",
+    "U+5E74",
+    "U+5E7C",
+    "U+5EF6",
+    "U+5EF7",
+    "U+5F0F",
+    "U+5F17",
+    "U+5F18",
+    "U+5F53",
+    "U+5FC5",
+    "U+620C",
+    "U+620E",
+    "U+6210",
+    "U+6258",
+    "U+625B",
+    "U+6263",
+    "U+6267",
+    "U+6269",
+    "U+626B",
+    "U+626C",
+    "U+65A5",
+    "U+65E9",
+    "U+65EC",
+    "U+66F2",
+    "U+6709",
+    "U+6731",
+    "U+6734",
+    "U+6735",
+    "U+673A",
+    "U+673D",
+    "U+6740",
+    "U+6742",
+    "U+6743",
+    "U+6B64",
+    "U+6B7B",
+    "U+6BCD",
+    "U+6BD5",
+    "U+6C11",
+    "U+6C38",
+    "U+6C41",
+    "U+6C47",
+    "U+6C49",
+    "U+7070",
+    "U+7237",
+    "U+72AF",
+    "U+7384",
+    "U+74DC",
+    "U+751F",
+    "U+7528",
+    "U+7529",
+    "U+767D",
+    "U+767E",
+    "U+76AE",
+    "U+76BF",
+    "U+77DB",
+    "U+77E2",
+    "U+793C",
+    "U+79BE",
+    "U+7A74",
+    "U+7ACB",
+    "U+7AF9",
+    "U+7EA0",
+    "U+7F51",
+    "U+8001",
+    "U+8003",
+    "U+800C",
+    "U+8033",
+    "U+8089",
+    "U+808B",
+    "U+808C",
+    "U+81E3",
+    "U+81EA",
+    "U+81F3",
+    "U+81FC",
+    "U+820C",
+    "U+821F",
+    "U+828B",
+    "U+8292",
+    "U+829D",
+    "U+866B",
+    "U+8840",
+    "U+884C",
+    "U+897F",
+    "U+8BA8",
+    "U+8BA9",
+    "U+8BAD",
+    "U+8BAE",
+    "U+8BAF",
+    "U+8BB0",
+    "U+8D1E",
+    "U+8F68",
+    "U+8FB9",
+    "U+8FBD",
+    "U+8FBE",
+    "U+8FC1",
+    "U+8FC2",
+    "U+8FC4",
+    "U+8FC7",
+    "U+8FC8",
+    "U+90A6",
+    "U+90AA",
+    "U+95EA",
+    "U+9875",
+    "U+9965",
+    "U+9E1F"
+  ],
+  "conversion": {
+    "coord_space": "integer-0-1024-y-down",
+    "curve_flattening": {
+      "algorithm": "de_casteljau_recursive",
+      "max_depth": 8,
+      "tolerance": 0.25
+    },
+    "outline_fit_max_points": 200,
+    "outline_format_max_points": 256,
+    "script": "scripts/convert_stroke_order.py",
+    "source_coordinate_slop": 128,
+    "source_coordinate_slop_note": "MMAH control points slightly outside 0..1024 are clamped into the SOB1 box; coordinates farther away are still rejected. Device format limits are unchanged.",
+    "y_axis": "flip_to_y_down"
+  },
+  "first_official_rank": 251,
+  "format": "stroke_order_bin",
+  "format_version": 1,
+  "last_official_rank": 500,
+  "limits": {
+    "max_character_bytes": 16384,
+    "max_characters": 1024,
+    "max_file_bytes": 1048576,
+    "max_median_points_per_stroke": 64,
+    "max_outline_points_per_stroke": 256,
+    "max_strokes_per_character": 48
+  },
+  "magic": "SOB1",
+  "not_a_release_library": true,
+  "not_commercially_reviewed": true,
+  "not_official_certification": true,
+  "prototype": true,
+  "sha256_bin": "2fc7d1c5f948bf2ea867fa9a31398c62b3a561fe94a31911a3fe7efa594a9bb8",
+  "shard_count": 8,
+  "shard_index": 1,
+  "source": {
+    "checkout_clean": true,
+    "commit": "68d10a4b21150cae5e1ebbd223eed289cf32d90c",
+    "dictionary_license_note": "Dictionary material associated with Make Me a Hanzi / related datasets may be LGPL or other copyleft terms. This converter only reads strokes/medians graphics JSON and does not vendor dictionary text.",
+    "files": [
+      {
+        "character": "丘",
+        "codepoint": "U+4E18",
+        "path": "data/丘.json",
+        "sha256": "1376af43ff9059b19268e6d0c89e2047862a03c7b3b4ece582643f76aa5e0d13"
+      },
+      {
+        "character": "丛",
+        "codepoint": "U+4E1B",
+        "path": "data/丛.json",
+        "sha256": "c4e7f005782f8db483b88a4ac2435645e390b9ab4093c230e7225829b656389d"
+      },
+      {
+        "character": "丝",
+        "codepoint": "U+4E1D",
+        "path": "data/丝.json",
+        "sha256": "55b4b03645e81a041d9cbf365f508492cd5ade4d15a308e79df78f6fa412f625"
+      },
+      {
+        "character": "丢",
+        "codepoint": "U+4E22",
+        "path": "data/丢.json",
+        "sha256": "26cdbb6b5f04021760eecaaaa08d6d8a3194e756bafbc11a2c328adb1a8c7a46"
+      },
+      {
+        "character": "主",
+        "codepoint": "U+4E3B",
+        "path": "data/主.json",
+        "sha256": "e734d5d4b6a88bb49529dae70d36aebfdbd7417e6ed12cc0ec2d39a43e95dc38"
+      },
+      {
+        "character": "乍",
+        "codepoint": "U+4E4D",
+        "path": "data/乍.json",
+        "sha256": "980cb748cbccb10f9ad7dbe9a1f55e9dbe9c3ea8c7e757fc1dfea8751961b9b0"
+      },
+      {
+        "character": "乎",
+        "codepoint": "U+4E4E",
+        "path": "data/乎.json",
+        "sha256": "e8fe3e283e8123d054e924379b5b80ce5024ffe649c306a50e8cf38d0072493b"
+      },
+      {
+        "character": "乐",
+        "codepoint": "U+4E50",
+        "path": "data/乐.json",
+        "sha256": "e5b3d2904512d9b0ac920fabe82e7c5cf1be5bc8b1931f0fee5d59398284cd75"
+      },
+      {
+        "character": "乒",
+        "codepoint": "U+4E52",
+        "path": "data/乒.json",
+        "sha256": "e1d81e1e3ad9db019a75e91594cd1b1aa396ac80bb534dc5906968460f2d5955"
+      },
+      {
+        "character": "乓",
+        "codepoint": "U+4E53",
+        "path": "data/乓.json",
+        "sha256": "49a0f91b1568c95772a31df6468b8e19621acd23105e4d41221976f6a6b4ff9f"
+      },
+      {
+        "character": "乔",
+        "codepoint": "U+4E54",
+        "path": "data/乔.json",
+        "sha256": "6504f49ca73231c70b92ead86c7b0ba7e8cde663ef0763f312e9c1c512f517e3"
+      },
+      {
+        "character": "亚",
+        "codepoint": "U+4E9A",
+        "path": "data/亚.json",
+        "sha256": "4b4e8bbb012ce5355f2cb9050dfaa1248bdff89db39250203e78b9ce50ef7b0d"
+      },
+      {
+        "character": "仔",
+        "codepoint": "U+4ED4",
+        "path": "data/仔.json",
+        "sha256": "fa951d83e847f7696bacefc89a38b879c8e6f7141402f891d42fe2e68c6b11c9"
+      },
+      {
+        "character": "他",
+        "codepoint": "U+4ED6",
+        "path": "data/他.json",
+        "sha256": "93c72a3fb00f00e9d7c3da8e2bf25e913bd3eba3c71eaafacc69f55891dc5625"
+      },
+      {
+        "character": "仗",
+        "codepoint": "U+4ED7",
+        "path": "data/仗.json",
+        "sha256": "47521b342903e19f53ddfc9049305be56da60e8d9664d0298aa4e1aef69ffd8d"
+      },
+      {
+        "character": "付",
+        "codepoint": "U+4ED8",
+        "path": "data/付.json",
+        "sha256": "4290e5521daf5b6cc0738a0a7cd5bcbf12a24d821619f271fb6b7ef3e9a9f7d1"
+      },
+      {
+        "character": "仙",
+        "codepoint": "U+4ED9",
+        "path": "data/仙.json",
+        "sha256": "7605ce00953fbff8e57ba497c6463d2a1e4c45101456e36cc6fc97ea82fe6a2e"
+      },
+      {
+        "character": "代",
+        "codepoint": "U+4EE3",
+        "path": "data/代.json",
+        "sha256": "212146135812af28863e58e1ca2a878436ca480d118bc4eb027fe7f6b35adee9"
+      },
+      {
+        "character": "令",
+        "codepoint": "U+4EE4",
+        "path": "data/令.json",
+        "sha256": "93e15a8610708604025a03261f3918650f03a11b839b08aa177cdb748b824144"
+      },
+      {
+        "character": "仪",
+        "codepoint": "U+4EEA",
+        "path": "data/仪.json",
+        "sha256": "8cefc4e519f3c1c1296cb2936e9be3b5413caf0dfbe9d88957ffddd3e0ad41f7"
+      },
+      {
+        "character": "们",
+        "codepoint": "U+4EEC",
+        "path": "data/们.json",
+        "sha256": "0a25764ae60803a9958ae3cade375c57d8743d7db0e0bf2031e73b0d0449609e"
+      },
+      {
+        "character": "仰",
+        "codepoint": "U+4EF0",
+        "path": "data/仰.json",
+        "sha256": "78d82057c24513452b4bebeae5c86a7c450f261c8a1825136b738565a975718e"
+      },
+      {
+        "character": "仲",
+        "codepoint": "U+4EF2",
+        "path": "data/仲.json",
+        "sha256": "02d7449d207167187e6cae435d9862856d3ec2ef537ca540090042b8609dba53"
+      },
+      {
+        "character": "件",
+        "codepoint": "U+4EF6",
+        "path": "data/件.json",
+        "sha256": "f3c7a57d23ec650db9147ea34732ef3d57c1eddb8ded94125172921f46442e6a"
+      },
+      {
+        "character": "价",
+        "codepoint": "U+4EF7",
+        "path": "data/价.json",
+        "sha256": "3747d59218dd9050edd7d0b0299bc82c90b9277ec17b58e1088783c1112277f2"
+      },
+      {
+        "character": "任",
+        "codepoint": "U+4EFB",
+        "path": "data/任.json",
+        "sha256": "e753118121d36279f3f611d4eb44e36249001959455227d34738e9bfd7c620b7"
+      },
+      {
+        "character": "份",
+        "codepoint": "U+4EFD",
+        "path": "data/份.json",
+        "sha256": "feed7ab69594c058b43ca7d62629ceb6f45321ebc8fe645f0cd35509cbfb16b7"
+      },
+      {
+        "character": "仿",
+        "codepoint": "U+4EFF",
+        "path": "data/仿.json",
+        "sha256": "51ae95d4cff774b031e82479887d9cdadf6464554648ce1172edd9c2243a5d05"
+      },
+      {
+        "character": "企",
+        "codepoint": "U+4F01",
+        "path": "data/企.json",
+        "sha256": "9b842180453c03f870fb085abb7d6738fc3d522c2e6f7f00f762e8c16ba0cec5"
+      },
+      {
+        "character": "伊",
+        "codepoint": "U+4F0A",
+        "path": "data/伊.json",
+        "sha256": "a4e1cfd387ffd5d1e939caf278aa9748eb3e33ba8194686c73aed30443abb5d9"
+      },
+      {
+        "character": "伍",
+        "codepoint": "U+4F0D",
+        "path": "data/伍.json",
+        "sha256": "01fb687f2fc107c46fe29e3511c99f6ca800c1b8dd04e4594fb2fd178a023410"
+      },
+      {
+        "character": "伏",
+        "codepoint": "U+4F0F",
+        "path": "data/伏.json",
+        "sha256": "b4b27b1e62927dca231a3dd54926601d3add10add16956c91958daa8ee55fd28"
+      },
+      {
+        "character": "伐",
+        "codepoint": "U+4F10",
+        "path": "data/伐.json",
+        "sha256": "330c3bde56d290744fc7365a246f915ecbb0c120b74daf7f9ab04e46137c7bca"
+      },
+      {
+        "character": "休",
+        "codepoint": "U+4F11",
+        "path": "data/休.json",
+        "sha256": "38d9571fe1ec07e7563fbae70241a75ed42785dd1ba8c1162708d6c156c978bc"
+      },
+      {
+        "character": "众",
+        "codepoint": "U+4F17",
+        "path": "data/众.json",
+        "sha256": "b6304ddc51345ef328d143efe6e0f8e95ab4746d7b567744e1e21c2e2c3f077c"
+      },
+      {
+        "character": "优",
+        "codepoint": "U+4F18",
+        "path": "data/优.json",
+        "sha256": "219e22f563763abaf61b12eadd74f8e722d9fd20e2cde4b2a5127591e0863760"
+      },
+      {
+        "character": "伙",
+        "codepoint": "U+4F19",
+        "path": "data/伙.json",
+        "sha256": "dc585c028cdc4b7fdd433d062f382bcf318097bd246b89ec9d033deed5fd3a5e"
+      },
+      {
+        "character": "会",
+        "codepoint": "U+4F1A",
+        "path": "data/会.json",
+        "sha256": "0eb3173ca95ffa3b8dfcf2f5ea11b312b3af7290dbf674c2dab04338351d09e4"
+      },
+      {
+        "character": "伞",
+        "codepoint": "U+4F1E",
+        "path": "data/伞.json",
+        "sha256": "4449070b716bff06c1155c6dbd263ae4f36a6fb7c2a1bfba63f9e70d653b285a"
+      },
+      {
+        "character": "伟",
+        "codepoint": "U+4F1F",
+        "path": "data/伟.json",
+        "sha256": "18dc91d3b9e9ac5353b6d644b75520a6f6924c38bbcc41c99b5b20eac9dee3d8"
+      },
+      {
+        "character": "传",
+        "codepoint": "U+4F20",
+        "path": "data/传.json",
+        "sha256": "8ee760b6dc9cf87f9184b3bdb96598d8fadddaac0ba9935bdc07bb92cbd23436"
+      },
+      {
+        "character": "伤",
+        "codepoint": "U+4F24",
+        "path": "data/伤.json",
+        "sha256": "f77e0bad7f75c292ebe5705dd1fdb6ffae7ce50705cd6f0d0ee675400cb00705"
+      },
+      {
+        "character": "伦",
+        "codepoint": "U+4F26",
+        "path": "data/伦.json",
+        "sha256": "a52134dbbf7ac0f49ebaf4013f9596d5d26f5f441b17625f7b4614facad1c58f"
+      },
+      {
+        "character": "伪",
+        "codepoint": "U+4F2A",
+        "path": "data/伪.json",
+        "sha256": "e671111d17d0977c0271f088d65f937e62e3dd325542eb232d215c02e502a216"
+      },
+      {
+        "character": "似",
+        "codepoint": "U+4F3C",
+        "path": "data/似.json",
+        "sha256": "951bdc90a1c032a5915ce23dc21f5dc3e1d014bb5dcb53fb13775571587109bd"
+      },
+      {
+        "character": "兆",
+        "codepoint": "U+5146",
+        "path": "data/兆.json",
+        "sha256": "e2da4aaa1e5761d042e09f2e5ece1954c7ff55d98aec1cd00ba914992b7514e6"
+      },
+      {
+        "character": "先",
+        "codepoint": "U+5148",
+        "path": "data/先.json",
+        "sha256": "20b7475d7a76d3e2233ef9bd28c1239392630fb1407565c325d3efbdc0445c19"
+      },
+      {
+        "character": "光",
+        "codepoint": "U+5149",
+        "path": "data/光.json",
+        "sha256": "8f993892d1e521df7b62ad9ea3fc0e8aa567c2bb9bc5597ddc8c0ad16ab7d89f"
+      },
+      {
+        "character": "全",
+        "codepoint": "U+5168",
+        "path": "data/全.json",
+        "sha256": "6630c21ff661e22e381122968fb39ced8527d470913cc939a5a1d29c34b40051"
+      },
+      {
+        "character": "兰",
+        "codepoint": "U+5170",
+        "path": "data/兰.json",
+        "sha256": "8bbc7966ecab12e68ce815345208495edd87addf3e909a38c6e503f21a46a4d8"
+      },
+      {
+        "character": "共",
+        "codepoint": "U+5171",
+        "path": "data/共.json",
+        "sha256": "d49fe1a69b933a1c2dc13c00efda743f28a8cff0e51bd65ec8ad55b786a5a096"
+      },
+      {
+        "character": "冉",
+        "codepoint": "U+5189",
+        "path": "data/冉.json",
+        "sha256": "06e6a4280310188ad0e9a04a2498ad829214c82fb2ea7c043031df28ea9ecc5c"
+      },
+      {
+        "character": "册",
+        "codepoint": "U+518C",
+        "path": "data/册.json",
+        "sha256": "e60514b19a6d3acffe179934dcfa86b81c22311751015f5e3b59b0f87bb04e38"
+      },
+      {
+        "character": "再",
+        "codepoint": "U+518D",
+        "path": "data/再.json",
+        "sha256": "63c13624816b79b2edb3f6d04c494a1bc8fe89175e06c4f1e7452e2016e5224c"
+      },
+      {
+        "character": "写",
+        "codepoint": "U+5199",
+        "path": "data/写.json",
+        "sha256": "803022b32271801f05bd0931a18608b3319f7a9ffe0ea88093b19d539cf1941f"
+      },
+      {
+        "character": "冬",
+        "codepoint": "U+51AC",
+        "path": "data/冬.json",
+        "sha256": "c02ac4e9b9870df898bf29becd078d92f95ed5a4657908134d3741d3f6f95b5d"
+      },
+      {
+        "character": "冯",
+        "codepoint": "U+51AF",
+        "path": "data/冯.json",
+        "sha256": "0ed2e0bba35744f26f9178439e311fa8ce7b958f2e989d44807b5c7b3a847f76"
+      },
+      {
+        "character": "凹",
+        "codepoint": "U+51F9",
+        "path": "data/凹.json",
+        "sha256": "5f6be3f2b7993a9f9a1c40a4929103538d69ddc851faa6fa70f2da04c45bee93"
+      },
+      {
+        "character": "出",
+        "codepoint": "U+51FA",
+        "path": "data/出.json",
+        "sha256": "1b7e7176d1c5ca47f340e9ce28937f33929b6768ee20ea79f9129118b87f00a2"
+      },
+      {
+        "character": "刑",
+        "codepoint": "U+5211",
+        "path": "data/刑.json",
+        "sha256": "b4c57e27ee4afb877132cd8f8fafc6c55ffd29ddfc5133fabc44cd5c2ae943a6"
+      },
+      {
+        "character": "划",
+        "codepoint": "U+5212",
+        "path": "data/划.json",
+        "sha256": "398e2f033559b0a1df2a128f3b425ef39ef16ff8745c94ca18c2b71a42d57c6b"
+      },
+      {
+        "character": "列",
+        "codepoint": "U+5217",
+        "path": "data/列.json",
+        "sha256": "5baa3038f5474c8aee82995dee229fc4c147f6041261525d7262ec66cf1b69d6"
+      },
+      {
+        "character": "则",
+        "codepoint": "U+5219",
+        "path": "data/则.json",
+        "sha256": "23b95166d74292a44e37ad793bed6cea7e728d89e373a738c417b062643450c5"
+      },
+      {
+        "character": "刚",
+        "codepoint": "U+521A",
+        "path": "data/刚.json",
+        "sha256": "3117e27951989bb08cc9e9cc9d7dfc6fa3fbccd1a955f23971aaf2d61d20d389"
+      },
+      {
+        "character": "创",
+        "codepoint": "U+521B",
+        "path": "data/创.json",
+        "sha256": "4a3b941102a15c7b29d3df209752d4fbc4c463f1de00a8784bccd46a5f66ed6e"
+      },
+      {
+        "character": "加",
+        "codepoint": "U+52A0",
+        "path": "data/加.json",
+        "sha256": "6f50a7599c23a95de51f8db97710089f6fcd6c8e034e50275f870e8445df9f09"
+      },
+      {
+        "character": "务",
+        "codepoint": "U+52A1",
+        "path": "data/务.json",
+        "sha256": "efd12c183bd095e5d64f0a309395173db087c70de8836cc6c0bcb92c00e19b68"
+      },
+      {
+        "character": "劣",
+        "codepoint": "U+52A3",
+        "path": "data/劣.json",
+        "sha256": "10c0d0be4993f4af6f21417ee2d89b3cd6c4d3a9b5b487c8f3e0df97775e1f80"
+      },
+      {
+        "character": "动",
+        "codepoint": "U+52A8",
+        "path": "data/动.json",
+        "sha256": "7d71cb3a5c9cf6f7bbdcef57379268087939ddfd9aa1a1e4b25cf9d2687e3fce"
+      },
+      {
+        "character": "包",
+        "codepoint": "U+5305",
+        "path": "data/包.json",
+        "sha256": "06c5b55a0acfd21621f9eef34bfb18c9de54320913d6b5f0aea44b36c6117d78"
+      },
+      {
+        "character": "匆",
+        "codepoint": "U+5306",
+        "path": "data/匆.json",
+        "sha256": "f82282712a5480dc941d74e515469137783021257f2f7ef6281f12b00789ee9c"
+      },
+      {
+        "character": "匠",
+        "codepoint": "U+5320",
+        "path": "data/匠.json",
+        "sha256": "8035012deadef1eaca55a96a7a6461576bd6183fb31241ea9423f7672b9aa9f2"
+      },
+      {
+        "character": "半",
+        "codepoint": "U+534A",
+        "path": "data/半.json",
+        "sha256": "7f3a9c1766ccd8a44224babb7e106ad95e831b9a6f850fc89c6fd6f41e7b7099"
+      },
+      {
+        "character": "华",
+        "codepoint": "U+534E",
+        "path": "data/华.json",
+        "sha256": "e32b9051c9c6d724587b1ee0ad26b9ccc79a1c988350c21f4d0e52e830879499"
+      },
+      {
+        "character": "协",
+        "codepoint": "U+534F",
+        "path": "data/协.json",
+        "sha256": "a6b2a7ff6e7741f66027adcd58a5a391f9b1f85796a06d66b57303207b44adb3"
+      },
+      {
+        "character": "卯",
+        "codepoint": "U+536F",
+        "path": "data/卯.json",
+        "sha256": "3b9084cf003fe2a00f0bf99bd733a79a3caf3cd4f621621954ea570ec9ec2f3d"
+      },
+      {
+        "character": "印",
+        "codepoint": "U+5370",
+        "path": "data/印.json",
+        "sha256": "703778b9cc7d472e3eae284906b56c4d29f1feb576be62468f91d3cbc52be100"
+      },
+      {
+        "character": "危",
+        "codepoint": "U+5371",
+        "path": "data/危.json",
+        "sha256": "8a72e42cc3a28554c22f75eadd2f959b3b72c9c91fc30035a8c07b29b1195b66"
+      },
+      {
+        "character": "压",
+        "codepoint": "U+538B",
+        "path": "data/压.json",
+        "sha256": "62d743dbbc1674a7f47a976b989e445414b26ce3e2b0487d6b9b713a1c49e09a"
+      },
+      {
+        "character": "厌",
+        "codepoint": "U+538C",
+        "path": "data/厌.json",
+        "sha256": "f171b485417e14255820e037f921c5278d2c29ea14f95ad6e3d406c236980bf4"
+      },
+      {
+        "character": "发",
+        "codepoint": "U+53D1",
+        "path": "data/发.json",
+        "sha256": "2277fbd8beb585441eff987bb10b812881b0f96989e06efa257c12fa79b01134"
+      },
+      {
+        "character": "句",
+        "codepoint": "U+53E5",
+        "path": "data/句.json",
+        "sha256": "5f40875128cc785ddd0ce77c550513da374906e03a5c94fecd3578121bdb7bdd"
+      },
+      {
+        "character": "另",
+        "codepoint": "U+53E6",
+        "path": "data/另.json",
+        "sha256": "5dab4113c19889813b569b3d0bdbb5cf8dfd05b04345a88d3f1ede09019c91e8"
+      },
+      {
+        "character": "叨",
+        "codepoint": "U+53E8",
+        "path": "data/叨.json",
+        "sha256": "75043bac4281149542e444e5bd2c01911978cd57d7ff0ef35908a51d90a32a47"
+      },
+      {
+        "character": "叩",
+        "codepoint": "U+53E9",
+        "path": "data/叩.json",
+        "sha256": "786d9b9fb48dd3f9f09af2a13cff651903d97f908fe6941d22ba00f33ff06c68"
+      },
+      {
+        "character": "叫",
+        "codepoint": "U+53EB",
+        "path": "data/叫.json",
+        "sha256": "a5cc36373dc1a8ee08e4d3f1eb05ce1048c9a6d7dfc1936ce5ae17833c927278"
+      },
+      {
+        "character": "召",
+        "codepoint": "U+53EC",
+        "path": "data/召.json",
+        "sha256": "94f5c2b26b8988d77d40128253f22248f636eb2a8c245d59cbc6c547db6addcb"
+      },
+      {
+        "character": "台",
+        "codepoint": "U+53F0",
+        "path": "data/台.json",
+        "sha256": "966836873504e05df5ebcfe57718ca875e7d74cd43a2ab5e1c2e7d6551594bc2"
+      },
+      {
+        "character": "司",
+        "codepoint": "U+53F8",
+        "path": "data/司.json",
+        "sha256": "17963d4ce5fb97b6588d832e3ba1345498894ddab9895756a62491972be70ba8"
+      },
+      {
+        "character": "叹",
+        "codepoint": "U+53F9",
+        "path": "data/叹.json",
+        "sha256": "ebbcb92ace1921f596b42749356e98badc498bde8ab1177b3237ddfbc4328acd"
+      },
+      {
+        "character": "叼",
+        "codepoint": "U+53FC",
+        "path": "data/叼.json",
+        "sha256": "bdcb179d0be9abad49258e5183b6ce8f6b95080c071c9807dc7200ee8f0b905b"
+      },
+      {
+        "character": "叽",
+        "codepoint": "U+53FD",
+        "path": "data/叽.json",
+        "sha256": "57d407b51ad9ecdfc7645b93299c5b73780114f15b00f4f2a1af3888644274c7"
+      },
+      {
+        "character": "吁",
+        "codepoint": "U+5401",
+        "path": "data/吁.json",
+        "sha256": "5ecede5610404c44abd3754d957588e489bec76034f73eebf958fb2e5a850fc9"
+      },
+      {
+        "character": "吃",
+        "codepoint": "U+5403",
+        "path": "data/吃.json",
+        "sha256": "7030e0da002dbc77d79821e9b78ab848777a8b9c0dabd1340b41b5fc1dd63a36"
+      },
+      {
+        "character": "吆",
+        "codepoint": "U+5406",
+        "path": "data/吆.json",
+        "sha256": "cdd27b6f12918ea467f65f320e188faa096ab2bec5dd58f962e212a1e390a376"
+      },
+      {
+        "character": "合",
+        "codepoint": "U+5408",
+        "path": "data/合.json",
+        "sha256": "f2afe414f5f21f4aad46fbefae9ae4a2235fd0ec9ac466c25f565bc9788ceadd"
+      },
+      {
+        "character": "吉",
+        "codepoint": "U+5409",
+        "path": "data/吉.json",
+        "sha256": "4a87cc62d4838074f6d862860989655d1ad7f32af5101523887028a58beb735d"
+      },
+      {
+        "character": "吊",
+        "codepoint": "U+540A",
+        "path": "data/吊.json",
+        "sha256": "1ea6c8a7de0f8255ef6de0877c845569ec00bbbc37cb099235cd69af63a29221"
+      },
+      {
+        "character": "同",
+        "codepoint": "U+540C",
+        "path": "data/同.json",
+        "sha256": "ebac44738a64a0f7cb202363be8abfafe4aed2fc20965dd66f9b1f7555766967"
+      },
+      {
+        "character": "后",
+        "codepoint": "U+540E",
+        "path": "data/后.json",
+        "sha256": "1db954c5aa12b7c8efab666a716899c98e27c2b20312ae75df405bcf68cc5c91"
+      },
+      {
+        "character": "吏",
+        "codepoint": "U+540F",
+        "path": "data/吏.json",
+        "sha256": "a0374ef4a773614618e3f3d0b9304af6db671a9466a3e57859324f2fb8c98a4f"
+      },
+      {
+        "character": "吐",
+        "codepoint": "U+5410",
+        "path": "data/吐.json",
+        "sha256": "7fec6d611523fd971a2ae954e3b600d0df783dbcbb25f4dd85e8f6965b3fed7c"
+      },
+      {
+        "character": "向",
+        "codepoint": "U+5411",
+        "path": "data/向.json",
+        "sha256": "30e2acdb4695f379600f835070c984aceb78e07ec625fbda0a7c9e1f7f708c60"
+      },
+      {
+        "character": "吓",
+        "codepoint": "U+5413",
+        "path": "data/吓.json",
+        "sha256": "14630272b7436d04f3652f716f769a4a6f81256e3927a98a0193f0ed374b751f"
+      },
+      {
+        "character": "吕",
+        "codepoint": "U+5415",
+        "path": "data/吕.json",
+        "sha256": "abf9a4f3fc0c5d7f7f99919cccff0ea6ad222fdb43db878094571e52070cc9bc"
+      },
+      {
+        "character": "吗",
+        "codepoint": "U+5417",
+        "path": "data/吗.json",
+        "sha256": "fd15dc345d5413ebf4bb3517b7b616890b0a948f62a70a21a2a8eed4eed78583"
+      },
+      {
+        "character": "吸",
+        "codepoint": "U+5438",
+        "path": "data/吸.json",
+        "sha256": "468f805d4d0220618727fc6d9eca85cf58efb8fd3534bc7890434c04299074b3"
+      },
+      {
+        "character": "囚",
+        "codepoint": "U+56DA",
+        "path": "data/囚.json",
+        "sha256": "e01c353dc07f922119c3ce01d565f96cdb149fd403bf8794927b6e2a965e0a2c"
+      },
+      {
+        "character": "四",
+        "codepoint": "U+56DB",
+        "path": "data/四.json",
+        "sha256": "8aa7b3e16a0c3f67fc4ed3b08c7f24e80b2e90d8f6ade512d20109a625bea3b9"
+      },
+      {
+        "character": "回",
+        "codepoint": "U+56DE",
+        "path": "data/回.json",
+        "sha256": "2987e137d9a4bdbb061bd78dd315fe0d520eaa6d65dc5e48e3d6f8c907a06e8b"
+      },
+      {
+        "character": "因",
+        "codepoint": "U+56E0",
+        "path": "data/因.json",
+        "sha256": "ad7a3b6c044327ed5254585594c0cd7dadb1ad0c47555f5564d3e404ee42429b"
+      },
+      {
+        "character": "团",
+        "codepoint": "U+56E2",
+        "path": "data/团.json",
+        "sha256": "f3b0686a1e90638a46bc5bf49aca745cd0503ea79e1cde95f21d506448baed01"
+      },
+      {
+        "character": "圣",
+        "codepoint": "U+5723",
+        "path": "data/圣.json",
+        "sha256": "eb0e86465e6782b1c9bfa2231aab0233e2c3783435cf7538d18616c764f74218"
+      },
+      {
+        "character": "在",
+        "codepoint": "U+5728",
+        "path": "data/在.json",
+        "sha256": "ec45f668f3181cd2c612797ff557f5b53f8823f120eca5d9a68e0fd8b1b0f21c"
+      },
+      {
+        "character": "地",
+        "codepoint": "U+5730",
+        "path": "data/地.json",
+        "sha256": "ec1d89cb0ee0f4c93d546d561ea28b00f0378769c061ec5bf5f67381074765a3"
+      },
+      {
+        "character": "场",
+        "codepoint": "U+573A",
+        "path": "data/场.json",
+        "sha256": "d8a75696c0f8f53dc8cf3cac63416e0c9ddf93b61307bc574bfd7f429337b6bc"
+      },
+      {
+        "character": "圾",
+        "codepoint": "U+573E",
+        "path": "data/圾.json",
+        "sha256": "4b0baaa645f2b5f30e4037c6969148fbcd74ca5fd1bd15e354d0a4acd78e1347"
+      },
+      {
+        "character": "处",
+        "codepoint": "U+5904",
+        "path": "data/处.json",
+        "sha256": "39cf6bcd028d7280e210096c8b4dfb9bf4b2f386ae0430a7582502f477dcde4a"
+      },
+      {
+        "character": "外",
+        "codepoint": "U+5916",
+        "path": "data/外.json",
+        "sha256": "bab290c36ee093d6c2df1b9d95d3dbbcdf492dc108f3a7e81f0ac13cd8726d5c"
+      },
+      {
+        "character": "失",
+        "codepoint": "U+5931",
+        "path": "data/失.json",
+        "sha256": "c04b2dac3fbce793ae7c14942a01b236e7a651691fbc5872d51db0fbf66dedb9"
+      },
+      {
+        "character": "头",
+        "codepoint": "U+5934",
+        "path": "data/头.json",
+        "sha256": "3be11ae6a2e035f7a949c948279ad3f4d456a87e2ee0469d583e22648759901d"
+      },
+      {
+        "character": "夷",
+        "codepoint": "U+5937",
+        "path": "data/夷.json",
+        "sha256": "70d441509a18cbca098fe62d179c421d8b639c5ac90607a65d655f903dfbe83c"
+      },
+      {
+        "character": "夸",
+        "codepoint": "U+5938",
+        "path": "data/夸.json",
+        "sha256": "38be71ecd39090d33deaa8c91a1575352a2e46fba8811e7ec80ed560b8aea170"
+      },
+      {
+        "character": "夹",
+        "codepoint": "U+5939",
+        "path": "data/夹.json",
+        "sha256": "92563ae618a51974c92d6d73d27bd5d721ff056dd1dc06d9d2213f226ec2dff2"
+      },
+      {
+        "character": "夺",
+        "codepoint": "U+593A",
+        "path": "data/夺.json",
+        "sha256": "be480273deaab4be4869ab528cef0c4f5c0f0d9064d2c877bd42ec01dc67d74e"
+      },
+      {
+        "character": "奴",
+        "codepoint": "U+5974",
+        "path": "data/奴.json",
+        "sha256": "cd754baeb5ab4c7091a9f8bd57cd859743fcadd60403d1bc4d440203a1ad75b8"
+      },
+      {
+        "character": "奶",
+        "codepoint": "U+5976",
+        "path": "data/奶.json",
+        "sha256": "151460436d8c0f29b05af02b03e456d0232f4dc9f1bfae3b2b551aa8a99d3aa9"
+      },
+      {
+        "character": "孕",
+        "codepoint": "U+5B55",
+        "path": "data/孕.json",
+        "sha256": "b73d7f98d91b6b8e173fff1ee0d07af1db93c6f0d2b986031604c4b2e7a31e4f"
+      },
+      {
+        "character": "存",
+        "codepoint": "U+5B58",
+        "path": "data/存.json",
+        "sha256": "0517a08e277f9d3a8c05f7493c5dc8fc7416f3e2c9b1cc2e5fca8c4138679630"
+      },
+      {
+        "character": "宁",
+        "codepoint": "U+5B81",
+        "path": "data/宁.json",
+        "sha256": "b812fac69a9a279f3bbb4ffafac0e57a7ff73a262c61245f13163cc622efc849"
+      },
+      {
+        "character": "它",
+        "codepoint": "U+5B83",
+        "path": "data/它.json",
+        "sha256": "a0928b9f0c278b71354633c9b3f3b57279c6bc2bf055beefc9589fde6951f524"
+      },
+      {
+        "character": "对",
+        "codepoint": "U+5BF9",
+        "path": "data/对.json",
+        "sha256": "34cb1a64ee2a7794faec417b950b8a026efe6fc3779d09e363d6b383461f569a"
+      },
+      {
+        "character": "寺",
+        "codepoint": "U+5BFA",
+        "path": "data/寺.json",
+        "sha256": "5c1fee7337081942240ff553d1a027fa438e5ae91f6cd77599d85c9e5015d1b2"
+      },
+      {
+        "character": "尔",
+        "codepoint": "U+5C14",
+        "path": "data/尔.json",
+        "sha256": "9df9b1a24bda3811b709013817b99f739c17f14dd4ef36a659bec9f9264283eb"
+      },
+      {
+        "character": "尖",
+        "codepoint": "U+5C16",
+        "path": "data/尖.json",
+        "sha256": "c667c690a562e8d8b0d360d90f0e8ccff1a8cad5a0348fe5e461d72b21201dbc"
+      },
+      {
+        "character": "尘",
+        "codepoint": "U+5C18",
+        "path": "data/尘.json",
+        "sha256": "894a9d407f8e00124b8c6202e5f6965563b29bb43e748b3f03b04a7c5aa97d0e"
+      },
+      {
+        "character": "尧",
+        "codepoint": "U+5C27",
+        "path": "data/尧.json",
+        "sha256": "d160b9fd3471c480d7431cd7a090ff4fdd355e75c5a039672095fb0db0b4ade2"
+      },
+      {
+        "character": "尼",
+        "codepoint": "U+5C3C",
+        "path": "data/尼.json",
+        "sha256": "69fea4bef51684c72087ed5fb58f8638f570cc98139dc0826ce2e3d7128d361c"
+      },
+      {
+        "character": "屹",
+        "codepoint": "U+5C79",
+        "path": "data/屹.json",
+        "sha256": "6d4f03390f50ee8db747802c1beb4df235ecb3dc98b6df1a5e0510346a31ca54"
+      },
+      {
+        "character": "屿",
+        "codepoint": "U+5C7F",
+        "path": "data/屿.json",
+        "sha256": "548c5ea352f639ced130b22e60dbf15b0a7faf451b3c49813a5bdf0c705c8a7f"
+      },
+      {
+        "character": "岁",
+        "codepoint": "U+5C81",
+        "path": "data/岁.json",
+        "sha256": "b35bac3e29ec6b1b7d1525232bd8f820900fcb857cf10a70154f218db49cbb2c"
+      },
+      {
+        "character": "岂",
+        "codepoint": "U+5C82",
+        "path": "data/岂.json",
+        "sha256": "155c11ba4fdf04c3b3e19652e14ccbbaae230586594d5c3e7e681cd395aa6e9a"
+      },
+      {
+        "character": "巩",
+        "codepoint": "U+5DE9",
+        "path": "data/巩.json",
+        "sha256": "aa94a0664e1bcca03202f081eef68c364a195d00a7bd41547c05363795c0d6f9"
+      },
+      {
+        "character": "市",
+        "codepoint": "U+5E02",
+        "path": "data/市.json",
+        "sha256": "ef79fe1efa67b4592ca7feaa156474a2bf3bf4588774ae9ba8a60bda396b6b51"
+      },
+      {
+        "character": "帆",
+        "codepoint": "U+5E06",
+        "path": "data/帆.json",
+        "sha256": "36aad206654d062e8531e4577caa8a6f3d28d806249d37c716c9d1ba78b7704b"
+      },
+      {
+        "character": "师",
+        "codepoint": "U+5E08",
+        "path": "data/师.json",
+        "sha256": "80d528921fbb75b21ed1737f622adbb8e9da7b71b143a64382568f22ff812093"
+      },
+      {
+        "character": "年",
+        "codepoint": "U+5E74",
+        "path": "data/年.json",
+        "sha256": "2da9f7d7526442de1cad442cce66970ac1b41f72c2a388dc851d503ebab554c0"
+      },
+      {
+        "character": "幼",
+        "codepoint": "U+5E7C",
+        "path": "data/幼.json",
+        "sha256": "30f83f4724f512a131db7f8b8c9a46d8445ee5ce11a28180596de6baa5584646"
+      },
+      {
+        "character": "延",
+        "codepoint": "U+5EF6",
+        "path": "data/延.json",
+        "sha256": "8651d64912aaeeb52d49da82f5ba68824053a13e968c9e614b8e54cfad731691"
+      },
+      {
+        "character": "廷",
+        "codepoint": "U+5EF7",
+        "path": "data/廷.json",
+        "sha256": "16cee0aa9894dc66fd2c424ff6e34d45c1b2b64bb80bd10b9abc7b0d11f17f24"
+      },
+      {
+        "character": "式",
+        "codepoint": "U+5F0F",
+        "path": "data/式.json",
+        "sha256": "b354aa33d79c1d509842f48032afa0a917bdab9ab2b213fbef6f093d102bce24"
+      },
+      {
+        "character": "弗",
+        "codepoint": "U+5F17",
+        "path": "data/弗.json",
+        "sha256": "90649ba96241c158537d358159fc3d526ffe2c36824ba982916756700b4196bd"
+      },
+      {
+        "character": "弘",
+        "codepoint": "U+5F18",
+        "path": "data/弘.json",
+        "sha256": "e7c649f55e224ddc083a8acf8ed9ef66d23210fcda7915e6011c63d04b4f719e"
+      },
+      {
+        "character": "当",
+        "codepoint": "U+5F53",
+        "path": "data/当.json",
+        "sha256": "2d5386e1041495019d6427aa351d4c4e236c2f42bdd6e62fc993da222c6a4429"
+      },
+      {
+        "character": "必",
+        "codepoint": "U+5FC5",
+        "path": "data/必.json",
+        "sha256": "f49fe562d7bd6ab1f2b876555d6ddcafefd0f47eaae5eeeb005bb958dfc77fd9"
+      },
+      {
+        "character": "戌",
+        "codepoint": "U+620C",
+        "path": "data/戌.json",
+        "sha256": "df5fca3fdadddfdbfd49066088ab2c79858912d489649614d12215d3136cee1f"
+      },
+      {
+        "character": "戎",
+        "codepoint": "U+620E",
+        "path": "data/戎.json",
+        "sha256": "21b5611f4b87fa11ab61b369029408f2a26d153747e15f683ecbd819bd0e6cee"
+      },
+      {
+        "character": "成",
+        "codepoint": "U+6210",
+        "path": "data/成.json",
+        "sha256": "2f809672d37d80b691d5fb9787ef94dd7e4b0be2685c051e776fd1888f44640e"
+      },
+      {
+        "character": "托",
+        "codepoint": "U+6258",
+        "path": "data/托.json",
+        "sha256": "5d1bd574aa3d09fae28fdd9a6bb736b9e3402610b5f88f5a570291c49549a655"
+      },
+      {
+        "character": "扛",
+        "codepoint": "U+625B",
+        "path": "data/扛.json",
+        "sha256": "ed0a02ebc819f16a4d68e8f727447bed19634af06a842bf554297aefd22d48b1"
+      },
+      {
+        "character": "扣",
+        "codepoint": "U+6263",
+        "path": "data/扣.json",
+        "sha256": "353d23eb3357242041d0640ff6d3d4a1c067b73531040bd1b1bc97093fbaf23e"
+      },
+      {
+        "character": "执",
+        "codepoint": "U+6267",
+        "path": "data/执.json",
+        "sha256": "27e9e2c5a50e6340d49612c8f619d17f03c5c25812b50db98fcd67b1484ac995"
+      },
+      {
+        "character": "扩",
+        "codepoint": "U+6269",
+        "path": "data/扩.json",
+        "sha256": "2aa77a994c1abe63f9ececd090a5b7a0df88658034abf5033060676294060904"
+      },
+      {
+        "character": "扫",
+        "codepoint": "U+626B",
+        "path": "data/扫.json",
+        "sha256": "e52722a3be01e6807cc02ff7d9387432b65972581f4edaa1ce7676d383a6b6cf"
+      },
+      {
+        "character": "扬",
+        "codepoint": "U+626C",
+        "path": "data/扬.json",
+        "sha256": "1ed1ab01e37100b6c85bebf0fad24af246282b2a1328128afbf06d87e1fba9ea"
+      },
+      {
+        "character": "斥",
+        "codepoint": "U+65A5",
+        "path": "data/斥.json",
+        "sha256": "a0aa59ec5b7c7351c19252bf51456437b21631d73095899efe9b456f44f03b25"
+      },
+      {
+        "character": "早",
+        "codepoint": "U+65E9",
+        "path": "data/早.json",
+        "sha256": "4d6b2979bd1167355372cf73800a2ce13032febb989b8bf5901e6a7dbe773454"
+      },
+      {
+        "character": "旬",
+        "codepoint": "U+65EC",
+        "path": "data/旬.json",
+        "sha256": "eb0f873e5cea10857eec01c6044b3582145a485764f7b68727a751295d33638e"
+      },
+      {
+        "character": "曲",
+        "codepoint": "U+66F2",
+        "path": "data/曲.json",
+        "sha256": "25cf025383c8a2619e74350c21a0dd26d717c22d069501147949bd0221f27925"
+      },
+      {
+        "character": "有",
+        "codepoint": "U+6709",
+        "path": "data/有.json",
+        "sha256": "cee2fb732f41de30a7b0c84880d2d47af0a9fda6fda795d99c77a57f2ee4c8e4"
+      },
+      {
+        "character": "朱",
+        "codepoint": "U+6731",
+        "path": "data/朱.json",
+        "sha256": "87f5dd264abdf9b04ba84438bdf9220be0d9254ad94a00a56eea2ae9b8a45e65"
+      },
+      {
+        "character": "朴",
+        "codepoint": "U+6734",
+        "path": "data/朴.json",
+        "sha256": "8f44d0ca1da110533d91604ba0d88967712baf25e8e757e9a0ff3d2d911e4133"
+      },
+      {
+        "character": "朵",
+        "codepoint": "U+6735",
+        "path": "data/朵.json",
+        "sha256": "7e0a68a2d7aed76b029e501eddd676ef440fb9e69a6b9216029d331ab2106f06"
+      },
+      {
+        "character": "机",
+        "codepoint": "U+673A",
+        "path": "data/机.json",
+        "sha256": "42a5a786f303e3e08b268ecd35c872ae3668e170261b4109fbffc4a0a55c6bbc"
+      },
+      {
+        "character": "朽",
+        "codepoint": "U+673D",
+        "path": "data/朽.json",
+        "sha256": "c988f129c66bb9ff7057e8fc136b74e914247f047cc5813aeaccd0aac898856c"
+      },
+      {
+        "character": "杀",
+        "codepoint": "U+6740",
+        "path": "data/杀.json",
+        "sha256": "88a02e0bd63d8fc9db9b1048818f338f69b26290effd1958d36e3c32d3b99bf0"
+      },
+      {
+        "character": "杂",
+        "codepoint": "U+6742",
+        "path": "data/杂.json",
+        "sha256": "ebcf810513e0cabaa6342924583fc336fb3c686ea8f764a58100c2fe2a6506a0"
+      },
+      {
+        "character": "权",
+        "codepoint": "U+6743",
+        "path": "data/权.json",
+        "sha256": "47139fce50c3a5a2fb4e4d8734f6d3455da7d2fc0d9b066a4e7f401ccdcb5655"
+      },
+      {
+        "character": "此",
+        "codepoint": "U+6B64",
+        "path": "data/此.json",
+        "sha256": "3b2cda9c360d21fc01efb6db3e06cea6ada19f289d7445d578de63327afa6f08"
+      },
+      {
+        "character": "死",
+        "codepoint": "U+6B7B",
+        "path": "data/死.json",
+        "sha256": "595cec06f13a9f3e9ecad211f7d4197e795d1bd4e13c441d8cd6507077b0d881"
+      },
+      {
+        "character": "母",
+        "codepoint": "U+6BCD",
+        "path": "data/母.json",
+        "sha256": "6933626e85e8a84335dbd2e3de8381d472499b9addf6804e8f49714a134aa4e5"
+      },
+      {
+        "character": "毕",
+        "codepoint": "U+6BD5",
+        "path": "data/毕.json",
+        "sha256": "000b5108c9404a18e0ec558800e505a5c6bc002233c3a5b84e1cc5cd42d0d7da"
+      },
+      {
+        "character": "民",
+        "codepoint": "U+6C11",
+        "path": "data/民.json",
+        "sha256": "2ed17ad5dcde22f23cd16e8a2f7a00e8f7af3ce2df6d44cd6bb6703809dfc258"
+      },
+      {
+        "character": "永",
+        "codepoint": "U+6C38",
+        "path": "data/永.json",
+        "sha256": "009b7fd5b2fc186a0cdaa314fb4f88fe768c3c3ee4e98681ff8ff109c8c160cd"
+      },
+      {
+        "character": "汁",
+        "codepoint": "U+6C41",
+        "path": "data/汁.json",
+        "sha256": "d37367507797fb0e576c5771526a0b023db7e3fed2c541497b7979810f5f2413"
+      },
+      {
+        "character": "汇",
+        "codepoint": "U+6C47",
+        "path": "data/汇.json",
+        "sha256": "358b7025bed77c6891e49ac5b0c8404c7e9978d9cae95c432c8102a0ba13d123"
+      },
+      {
+        "character": "汉",
+        "codepoint": "U+6C49",
+        "path": "data/汉.json",
+        "sha256": "24bae414f2def0d58cab2a7ae066004c62bded29331127925f4a4521264bd8e7"
+      },
+      {
+        "character": "灰",
+        "codepoint": "U+7070",
+        "path": "data/灰.json",
+        "sha256": "c34e178862105ae95ae7590bec0acc5102d76debfb65c1d0e39462022e6b7bd6"
+      },
+      {
+        "character": "爷",
+        "codepoint": "U+7237",
+        "path": "data/爷.json",
+        "sha256": "4b14dfbd26ec432f4bfa4d2ea6e9f666430d7b29b3cae31b07e4392c5e8536ce"
+      },
+      {
+        "character": "犯",
+        "codepoint": "U+72AF",
+        "path": "data/犯.json",
+        "sha256": "89f5a6b9834639fa0fdafdefe952308dc72ae5c782e59a7dd9844355ec8a4083"
+      },
+      {
+        "character": "玄",
+        "codepoint": "U+7384",
+        "path": "data/玄.json",
+        "sha256": "ff5b8f1e4b07d3c3271577ca3410a634822640bc91c32aece137cd7fb3401172"
+      },
+      {
+        "character": "瓜",
+        "codepoint": "U+74DC",
+        "path": "data/瓜.json",
+        "sha256": "cebc4c9aba61f4fa5f9cac84c83617cdcd738fb1b91446f9396a32b245423903"
+      },
+      {
+        "character": "生",
+        "codepoint": "U+751F",
+        "path": "data/生.json",
+        "sha256": "dbe556919f5c0a95448c40997dfce35ad56ebf26d874218e7076d8c12374cfd8"
+      },
+      {
+        "character": "用",
+        "codepoint": "U+7528",
+        "path": "data/用.json",
+        "sha256": "a6e1dbddb1d80001248a0f332d0be070fd7d42353771bd90e10fa01872812bf9"
+      },
+      {
+        "character": "甩",
+        "codepoint": "U+7529",
+        "path": "data/甩.json",
+        "sha256": "707d921ed01d5ffa778b2e4d19a55e90a064662911d4e17039608a93f2a6e0b9"
+      },
+      {
+        "character": "白",
+        "codepoint": "U+767D",
+        "path": "data/白.json",
+        "sha256": "a3858cdfb3a8d08b8046aa4e8c9161dac017119c8f7986e52c9e6752d1721f2e"
+      },
+      {
+        "character": "百",
+        "codepoint": "U+767E",
+        "path": "data/百.json",
+        "sha256": "3cc71b969c7cb35878645077365f029ad249eef5c5f80b61683df4bbbf7849b2"
+      },
+      {
+        "character": "皮",
+        "codepoint": "U+76AE",
+        "path": "data/皮.json",
+        "sha256": "0a18effe9f6f9fa7facd4e1abac5dc1f2b05a88dfd882532cfd5e717e660e46d"
+      },
+      {
+        "character": "皿",
+        "codepoint": "U+76BF",
+        "path": "data/皿.json",
+        "sha256": "f822985f3359b565efce5f84acbcf458217d165b228e69457e944c5483045ea8"
+      },
+      {
+        "character": "矛",
+        "codepoint": "U+77DB",
+        "path": "data/矛.json",
+        "sha256": "1f9b73afd34d0bb248c2fca5cea838cfaf619a8c8508cb6ac3ee2bac694b4608"
+      },
+      {
+        "character": "矢",
+        "codepoint": "U+77E2",
+        "path": "data/矢.json",
+        "sha256": "67a256d1a1c0d2b0318f03799b4dfe9c865acaba9120252e863b469f9a12822b"
+      },
+      {
+        "character": "礼",
+        "codepoint": "U+793C",
+        "path": "data/礼.json",
+        "sha256": "b64a8b349e5dcf21063460449470b3ad6cf81f0ed93d5fbf30f9d5081b824d60"
+      },
+      {
+        "character": "禾",
+        "codepoint": "U+79BE",
+        "path": "data/禾.json",
+        "sha256": "74d7e9274a9b3d02fbb353f424a40988a3f8760bb9f465d834d048eceb7451ae"
+      },
+      {
+        "character": "穴",
+        "codepoint": "U+7A74",
+        "path": "data/穴.json",
+        "sha256": "6a07dfe14d15e66456f2793ae74e29fc83c751bd5f9f26067e3bd9b4f0489c25"
+      },
+      {
+        "character": "立",
+        "codepoint": "U+7ACB",
+        "path": "data/立.json",
+        "sha256": "be3a3135457203801eccfc357d620b742aa025938766395a3944c4f18ebbd295"
+      },
+      {
+        "character": "竹",
+        "codepoint": "U+7AF9",
+        "path": "data/竹.json",
+        "sha256": "038ede060ba5a500666f4c34051cdd760a3f7f122f04c4f4b040046a0a02e39d"
+      },
+      {
+        "character": "纠",
+        "codepoint": "U+7EA0",
+        "path": "data/纠.json",
+        "sha256": "373f5fedaee2433b7b3cc23003dbb664f1775d54e1f7fb4f6b8f1b1540fe70f3"
+      },
+      {
+        "character": "网",
+        "codepoint": "U+7F51",
+        "path": "data/网.json",
+        "sha256": "2b9a4ffbc811a9c265fb5d52019c2b1b626aef1190b7be47aecc15d2527fd356"
+      },
+      {
+        "character": "老",
+        "codepoint": "U+8001",
+        "path": "data/老.json",
+        "sha256": "f3130d50e757c65792633c581be89788d963819ed0df23380b6c94d5e31bf9d1"
+      },
+      {
+        "character": "考",
+        "codepoint": "U+8003",
+        "path": "data/考.json",
+        "sha256": "878445e80a4416e8940694fdaebccd08be644a051d9e081d68dc26b4de3f81af"
+      },
+      {
+        "character": "而",
+        "codepoint": "U+800C",
+        "path": "data/而.json",
+        "sha256": "a957f94a3ab8c0609edce0b27cec24a6d321eb9e332d342bee09c7d6379c0b5c"
+      },
+      {
+        "character": "耳",
+        "codepoint": "U+8033",
+        "path": "data/耳.json",
+        "sha256": "87d23fce6860c1b5600982e241b3ed486e7bededf8d78a674c55ccd8479e4c10"
+      },
+      {
+        "character": "肉",
+        "codepoint": "U+8089",
+        "path": "data/肉.json",
+        "sha256": "05c46b453d470ad79c4e38743b0f9e7afa746eacd3793d518b97f18ba0d43c3c"
+      },
+      {
+        "character": "肋",
+        "codepoint": "U+808B",
+        "path": "data/肋.json",
+        "sha256": "261e18afc6385a5ea8f48c6b6692408dd68bf433960ccdd6dc300935c001c3f2"
+      },
+      {
+        "character": "肌",
+        "codepoint": "U+808C",
+        "path": "data/肌.json",
+        "sha256": "8cc5639cdb59d190ea49343b5fee1884b7e9d7c69d360f8014a40ffd88045110"
+      },
+      {
+        "character": "臣",
+        "codepoint": "U+81E3",
+        "path": "data/臣.json",
+        "sha256": "fecbce50e22e38e81d7a7094e6b18e9596b5e5fa54d5c6be39a19519a4830d03"
+      },
+      {
+        "character": "自",
+        "codepoint": "U+81EA",
+        "path": "data/自.json",
+        "sha256": "440fa4d045ea9dad8643485ae45df8c446e03d91296923ece78e07695739ba90"
+      },
+      {
+        "character": "至",
+        "codepoint": "U+81F3",
+        "path": "data/至.json",
+        "sha256": "f923aa97bdf2ab2a7dea03a380a0c37b70758d9a89ced9ee87acc48b87dd0a79"
+      },
+      {
+        "character": "臼",
+        "codepoint": "U+81FC",
+        "path": "data/臼.json",
+        "sha256": "abc6e126cd50f75288a5268a4a0ea5ea25c12b4e8c88e5e9f1729296a06dffd8"
+      },
+      {
+        "character": "舌",
+        "codepoint": "U+820C",
+        "path": "data/舌.json",
+        "sha256": "b2ed3b5dc48c556b378212a0b67b2d4b6e452a7adc4d2cc2b0b385a9247def16"
+      },
+      {
+        "character": "舟",
+        "codepoint": "U+821F",
+        "path": "data/舟.json",
+        "sha256": "fdd5bbaa11dd49e66e459cca9a869b3f3fe0bff4b5ee7d1abee15791be27db48"
+      },
+      {
+        "character": "芋",
+        "codepoint": "U+828B",
+        "path": "data/芋.json",
+        "sha256": "f4c59fc36b129ee9eaa706552b43e015f6cc97d5278d1f84ba50236cf0db17f2"
+      },
+      {
+        "character": "芒",
+        "codepoint": "U+8292",
+        "path": "data/芒.json",
+        "sha256": "263d5e240d3c251432f15618e80d3257708e1429643af3aca15aae7e6940f4c8"
+      },
+      {
+        "character": "芝",
+        "codepoint": "U+829D",
+        "path": "data/芝.json",
+        "sha256": "7eec0b3867809fdd096f25c99439dfb7d1c1604479b692895a47257c3c84ca63"
+      },
+      {
+        "character": "虫",
+        "codepoint": "U+866B",
+        "path": "data/虫.json",
+        "sha256": "7fe903f045c6a90e401b81b859f6aa78a833a62e862110331bfc6d8c0f9a7e2e"
+      },
+      {
+        "character": "血",
+        "codepoint": "U+8840",
+        "path": "data/血.json",
+        "sha256": "a0cce905555ccf8f135f4f8037d2abb2e00707debec33eb47a27deae3426db06"
+      },
+      {
+        "character": "行",
+        "codepoint": "U+884C",
+        "path": "data/行.json",
+        "sha256": "85961bf6902e4e34fa1ddb5c55033904b34fb6439f93ee5efdafbe0def014422"
+      },
+      {
+        "character": "西",
+        "codepoint": "U+897F",
+        "path": "data/西.json",
+        "sha256": "f7599c5caa9c04e450f9c5b3e3cdd09523fd675d94f18c85997af05f023171d3"
+      },
+      {
+        "character": "讨",
+        "codepoint": "U+8BA8",
+        "path": "data/讨.json",
+        "sha256": "9a41cc119f3a5d46a1c2222643a95b792177990b12be18e7fa461a5cbccb5250"
+      },
+      {
+        "character": "让",
+        "codepoint": "U+8BA9",
+        "path": "data/让.json",
+        "sha256": "d17ad33a6ecdda31c53c04cf80cfb178fb2bb55fddff9b81e4040dcc250b6de7"
+      },
+      {
+        "character": "训",
+        "codepoint": "U+8BAD",
+        "path": "data/训.json",
+        "sha256": "620608ae2b1c0babe5a126f9f1f424059775baf5fb2bc103f7360b41397c82cc"
+      },
+      {
+        "character": "议",
+        "codepoint": "U+8BAE",
+        "path": "data/议.json",
+        "sha256": "8181cc4d6924db939049ce66fea7401e274840b7b74a8e7a9d8110256c917ebf"
+      },
+      {
+        "character": "讯",
+        "codepoint": "U+8BAF",
+        "path": "data/讯.json",
+        "sha256": "422d6a2254d55ec836b4ebddb5ed14e8aec68e65833ed71f0dbdac3ee179e2d3"
+      },
+      {
+        "character": "记",
+        "codepoint": "U+8BB0",
+        "path": "data/记.json",
+        "sha256": "9cd802d6220670eb4d59a384417a67b2da2ab91f2e13ffe00f57d610043b516d"
+      },
+      {
+        "character": "贞",
+        "codepoint": "U+8D1E",
+        "path": "data/贞.json",
+        "sha256": "f036f1f7ba902d049a67676e33ddc5c55334e02516b6b6ac667b020658a99c01"
+      },
+      {
+        "character": "轨",
+        "codepoint": "U+8F68",
+        "path": "data/轨.json",
+        "sha256": "b3dccf3ca1a0a38fb072ddccb40655a543ffee290620d92a32682944b942dde0"
+      },
+      {
+        "character": "边",
+        "codepoint": "U+8FB9",
+        "path": "data/边.json",
+        "sha256": "438159da28398664d643d5d2d980aa8445544174558dc1c59dd8a920df3a657a"
+      },
+      {
+        "character": "辽",
+        "codepoint": "U+8FBD",
+        "path": "data/辽.json",
+        "sha256": "47eb8033e1d870c9530b44a8335892ffec2cfdf57b35f073ae1dbd6f8d10326b"
+      },
+      {
+        "character": "达",
+        "codepoint": "U+8FBE",
+        "path": "data/达.json",
+        "sha256": "f0b31e02d900f492e5ab1ee36692853d9a9b49bf1a1d493a6ca66151163a46ae"
+      },
+      {
+        "character": "迁",
+        "codepoint": "U+8FC1",
+        "path": "data/迁.json",
+        "sha256": "628f08a2962985ddefa9bb1a64ffbb306d11d54e77ebf3e7533806eea934675b"
+      },
+      {
+        "character": "迂",
+        "codepoint": "U+8FC2",
+        "path": "data/迂.json",
+        "sha256": "fde1689d94686ca209a2ecc4873ae31fd6c237082a4bfb44a172cee7a4ff3c08"
+      },
+      {
+        "character": "迄",
+        "codepoint": "U+8FC4",
+        "path": "data/迄.json",
+        "sha256": "2649c2d5a6de779bb235652e8b7725b6d55733688c514e3b6ef42237ebeb29cd"
+      },
+      {
+        "character": "过",
+        "codepoint": "U+8FC7",
+        "path": "data/过.json",
+        "sha256": "b9e2c31965165d4c2a39de98e5730ed7f386da69b72c1073214c36c26905e8d9"
+      },
+      {
+        "character": "迈",
+        "codepoint": "U+8FC8",
+        "path": "data/迈.json",
+        "sha256": "6eed48f8120f7630ad9267c945803e6857d1d20534e5303575a0f8015c203416"
+      },
+      {
+        "character": "邦",
+        "codepoint": "U+90A6",
+        "path": "data/邦.json",
+        "sha256": "782c72a6d8c24ccf0e0f1ffcf2159b61d3ca9dfbeeb2cf091991399212257c98"
+      },
+      {
+        "character": "邪",
+        "codepoint": "U+90AA",
+        "path": "data/邪.json",
+        "sha256": "4ad3e69ef04335f43da52afeae1f5b4754f2753d113e95d15a95fecc6df4f74c"
+      },
+      {
+        "character": "闪",
+        "codepoint": "U+95EA",
+        "path": "data/闪.json",
+        "sha256": "873221f3f922de6918fc6db8813581fed6ee0cab4cb542330ffd401fa567386f"
+      },
+      {
+        "character": "页",
+        "codepoint": "U+9875",
+        "path": "data/页.json",
+        "sha256": "1464f7a8269fd481338e489a82222e3c83616ee233f66b3c70466d16ba62bd37"
+      },
+      {
+        "character": "饥",
+        "codepoint": "U+9965",
+        "path": "data/饥.json",
+        "sha256": "d6f6aeb5853b4e066deadb5fcb71bf1debb9f9aa6791588d1cefc00ca6b2539b"
+      },
+      {
+        "character": "鸟",
+        "codepoint": "U+9E1F",
+        "path": "data/鸟.json",
+        "sha256": "2d62bee9f3dce68cead54e04298b7ca9be109f8ebe9c59d356d2f89c38184a33"
+      }
+    ],
+    "graphics_license": "Arphic Public License",
+    "project": "hanzi-writer-data",
+    "repo": "https://github.com/chanind/hanzi-writer-data.git",
+    "selected_files_sha256": "3ec1e91650e211bc5beee017f007a583b572092f8bf0b19f64452725af1f7678",
+    "selected_files_sha256_encoding": "UTF-8 lines: codepoint\\0path\\0sha256\\n",
+    "upstream": "skishore/makemeahanzi"
+  },
+  "usage": "Prototype conversion output. Do not describe this file or its test fixtures as a published 字库. Commercial release requires license review and stroke-order accuracy review."
+}

@@ -59,9 +59,14 @@ bool Assets::FindPartition(Assets* assets) {
 bool Assets::Apply(bool refresh_display_theme) {
     const bool applied = strategy_ ? strategy_->Apply(this, refresh_display_theme) : false;
 #if CONFIG_STROKE_ORDER_LOCAL
-    // Re-read and copy the file after every Apply attempt. A failed/missing new
-    // asset must never leave the old StrokeOrderController readiness in place.
-    StrokeOrderView::GetInstance().RebindAssets();
+    // Publish SO only after the enclosing assets generation applies and its
+    // catalog, pinyin index, and every transient shard all validate. A failed
+    // generation must never leave old readiness or mmap references in place.
+    if (applied) {
+        StrokeOrderView::GetInstance().RebindAssets();
+    } else {
+        StrokeOrderView::GetInstance().SuspendAssets();
+    }
 #endif
     return applied;
 }

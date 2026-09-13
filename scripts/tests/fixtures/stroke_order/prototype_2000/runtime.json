@@ -1,0 +1,106 @@
+{
+  "catalog": {
+    "file": "stroke_cat.bin",
+    "format": "SCB1",
+    "sha256": "91779189b45526ab47cff2927b8da35e345e967a84e72096221e658e2cc919e4",
+    "size": 24352,
+    "version": 1
+  },
+  "character_count": 2000,
+  "not_a_release_library": true,
+  "not_commercially_reviewed": true,
+  "not_official_certification": true,
+  "pinyin": {
+    "file": "stroke_pinyin.bin",
+    "format": "SPY1",
+    "group_count": 1047,
+    "max_group_members": 29,
+    "sha256": "4597a2a7134d4d40e5b025b339d3491bbcaf05f75f7485dee4db7555429b6399",
+    "size": 63618,
+    "version": 1
+  },
+  "prototype": true,
+  "shards": [
+    {
+      "character_count": 250,
+      "crc32": "4d159978",
+      "first_rank": 1,
+      "last_rank": 250,
+      "runtime_name": "so00.bin",
+      "sha256": "a9108c23656aa91613c8fb8c7fc34e9ad59858b843af09d9b48cfb9460bbea6b",
+      "size": 443020,
+      "source_name": "so00.sob1"
+    },
+    {
+      "character_count": 250,
+      "crc32": "f02bb941",
+      "first_rank": 251,
+      "last_rank": 500,
+      "runtime_name": "so01.bin",
+      "sha256": "2fc7d1c5f948bf2ea867fa9a31398c62b3a561fe94a31911a3fe7efa594a9bb8",
+      "size": 603800,
+      "source_name": "so01.sob1"
+    },
+    {
+      "character_count": 250,
+      "crc32": "7e4fa02d",
+      "first_rank": 501,
+      "last_rank": 750,
+      "runtime_name": "so02.bin",
+      "sha256": "a915d0376995a074daa9f9b17d394019936121dcd5bba1e67fcd17bd74998a98",
+      "size": 680236,
+      "source_name": "so02.sob1"
+    },
+    {
+      "character_count": 250,
+      "crc32": "8fb72b03",
+      "first_rank": 751,
+      "last_rank": 1000,
+      "runtime_name": "so03.bin",
+      "sha256": "98a6bc6c21e8a736878092460d9280c242f3d064b0b34c379ae07d21006cd843",
+      "size": 723504,
+      "source_name": "so03.sob1"
+    },
+    {
+      "character_count": 250,
+      "crc32": "57b8d355",
+      "first_rank": 1001,
+      "last_rank": 1250,
+      "runtime_name": "so04.bin",
+      "sha256": "c7a9088e4ade040b5c2b91941f08aeb9e2862a81f9243e0c9418a47a2cab9a90",
+      "size": 771996,
+      "source_name": "so04.sob1"
+    },
+    {
+      "character_count": 250,
+      "crc32": "651cfc40",
+      "first_rank": 1251,
+      "last_rank": 1500,
+      "runtime_name": "so05.bin",
+      "sha256": "8855644a164204a83aa5ff64d5eab9a102eaef012ec660b301ccc25088b0b1dd",
+      "size": 816964,
+      "source_name": "so05.sob1"
+    },
+    {
+      "character_count": 250,
+      "crc32": "4f586b0f",
+      "first_rank": 1501,
+      "last_rank": 1750,
+      "runtime_name": "so06.bin",
+      "sha256": "900cb7ff2c288f64b937614969f3f0cff5e6b6cd5a0e421222264e8ee3d20778",
+      "size": 849284,
+      "source_name": "so06.sob1"
+    },
+    {
+      "character_count": 250,
+      "crc32": "4ee19fce",
+      "first_rank": 1751,
+      "last_rank": 2000,
+      "runtime_name": "so07.bin",
+      "sha256": "094287ea791635449092a6f366308b84f6571a664b74f155e882312a57358ba5",
+      "size": 911688,
+      "source_name": "so07.sob1"
+    }
+  ],
+  "total_shard_bytes": 5800492
+}

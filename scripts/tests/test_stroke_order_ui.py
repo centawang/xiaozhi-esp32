@@ -61,6 +61,8 @@ def _compile_controller_harness(output: Path):
         str(ROOT / "main"),
         str(ROOT / "scripts/tests/stroke_order_controller_harness.cc"),
         str(ROOT / "main/stroke_order/stroke_order_controller.cc"),
+        str(ROOT / "main/stroke_order/stroke_order_catalog.cc"),
+        str(ROOT / "main/stroke_order/stroke_order_pinyin.cc"),
         str(ROOT / "main/stroke_order/stroke_order_store.cc"),
         "-o",
         str(output),
@@ -173,6 +175,8 @@ def _compile_session_harness(output: Path):
         str(ROOT / "main"),
         str(ROOT / "scripts/tests/stroke_order_session_harness.cc"),
         str(ROOT / "main/stroke_order/stroke_order_controller.cc"),
+        str(ROOT / "main/stroke_order/stroke_order_catalog.cc"),
+        str(ROOT / "main/stroke_order/stroke_order_pinyin.cc"),
         str(ROOT / "main/stroke_order/stroke_order_store.cc"),
         "-o",
         str(output),
@@ -224,15 +228,27 @@ class StrokeOrderUiTest(unittest.TestCase):
     def test_cmake_declares_all_atomic_package_outputs(self):
         cmake = (ROOT / "main/CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("OUTPUT ${STROKE_ORDER_ASSET_OUTPUTS}", cmake)
-        self.assertIn("stroke_order.manifest.json", cmake)
+        self.assertIn("stroke_cat.bin", cmake)
         self.assertIn("stroke_pinyin.bin", cmake)
+        self.assertIn("so00.bin", cmake)
+        self.assertIn("so07.bin", cmake)
         self.assertIn("ARPHICPL.TXT", cmake)
         self.assertIn("UNICODE-LICENSE.txt", cmake)
         self.assertIn("NOTICE.md", cmake)
-        self.assertIn("selection-500.csv", cmake)
-        self.assertIn("charset-500.txt", cmake)
+        self.assertIn("selection-2000.csv", cmake)
+        self.assertIn("charset-2000.txt", cmake)
         self.assertIn("SHA256SUMS", cmake)
-        self.assertIn("package_stroke_order_prototype.py", cmake)
+        self.assertIn("package_stroke_order_2000.py", cmake)
+        self.assertIn("stroke_order/stroke_order_assets.cc", cmake)
+        for dependency in (
+            "stroke_order/catalog.py",
+            "stroke_order/constants.py",
+            "stroke_order/pinyin.py",
+            "stroke_order/pinyin_constants.py",
+            "stroke_order/select.py",
+            "stroke_order/unpack.py",
+        ):
+            self.assertIn(dependency, cmake)
         self.assertIn("DEFAULT_ASSETS_EXTRA_FILES_DEPENDENCIES ${STROKE_ORDER_ASSET_OUTPUTS}", cmake)
 
     def test_controller_state_idempotent_cancel_and_glyph_direction(self):

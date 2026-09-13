@@ -473,6 +473,7 @@ class StrokeOrderPinyinTest(unittest.TestCase):
                 str(ROOT / "scripts/tests/stroke_order_pinyin_harness.cc"),
                 str(ROOT / "main/stroke_order/stroke_order_pinyin.cc"),
                 str(ROOT / "main/stroke_order/stroke_order_controller.cc"),
+                str(ROOT / "main/stroke_order/stroke_order_catalog.cc"),
                 str(ROOT / "main/stroke_order/stroke_order_store.cc"),
                 "-o",
                 str(executable),
@@ -545,12 +546,13 @@ class StrokeOrderPinyinTest(unittest.TestCase):
 
     def test_cmake_uses_reviewed_prototype_pack(self):
         cmake = (ROOT / "main/CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn("package_stroke_order_prototype.py", cmake)
+        self.assertIn("package_stroke_order_2000.py", cmake)
         self.assertIn("stroke_pinyin.bin", cmake)
+        self.assertIn("stroke_cat.bin", cmake)
         self.assertIn("UNICODE-LICENSE.txt", cmake)
-        self.assertIn("prototype_500", cmake)
-        self.assertIn("selection-500.csv", cmake)
-        self.assertIn("charset-500.txt", cmake)
+        self.assertIn("prototype_2000", cmake)
+        self.assertIn("selection-2000.csv", cmake)
+        self.assertIn("charset-2000.txt", cmake)
         self.assertIn("SHA256SUMS", cmake)
         self.assertNotIn("package_stroke_order_smoke.py", cmake)
 

@@ -203,8 +203,8 @@ def union_readings(kmandarin: str, khanyu: str = "") -> List[str]:
             continue
         seen.add(item)
         ordered.append(item)
-        if len(ordered) >= MAX_READINGS_PER_CHARACTER:
-            break
+    if len(ordered) > MAX_READINGS_PER_CHARACTER:
+        raise PinyinError("pinyin reading union exceeds format limit; refusing to truncate")
     return ordered
 
 

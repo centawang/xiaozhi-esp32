@@ -2,6 +2,7 @@
 
 #include "stroke_order/stroke_order_alloc.h"
 #include "stroke_order/stroke_order_candidates.h"
+#include "stroke_order/stroke_order_catalog.h"
 #include "stroke_order/stroke_order_layout.h"
 #include "stroke_order/stroke_order_store.h"
 
@@ -26,10 +27,25 @@ enum class StrokeOrderUiState : uint8_t {
 
 /**
  * Local 笔划 session owner. No LVGL, no protocol, no DeviceStateMachine change.
- * BindStore makes a bounded owned copy of the SOB1 blob, so an Assets mmap may
- * be released immediately after BindStore returns. All store and animation
- * reads/writes take the controller mutex. Scale 0..1024 in the View.
+ *
+ * Production binds a small owned SCB1 catalog, validates each shard through a
+ * transient asset view, and decodes only candidate/current glyphs into owned
+ * vectors. It never copies the complete corpus or retains a shard/StrokeView
+ * across a mutex unlock or Assets generation change. BindStore remains as a
+ * bounded one-SOB1 compatibility path for host smoke tests.
  */
+class StrokeOrderPinyinIndex;
+
+class StrokeOrderShardSource {
+public:
+    virtual ~StrokeOrderShardSource() = default;
+
+    // The returned view is valid only until ReleaseShard(). Implementations
+    // must reject a second acquire while one view is outstanding.
+    virtual bool AcquireShard(const char* name, const uint8_t** data, size_t* size) = 0;
+    virtual void ReleaseShard() = 0;
+};
+
 class StrokeOrderController {
 public:
     struct DecodedPoint {
@@ -47,6 +63,8 @@ public:
     static constexpr uint32_t kStepDebounceMs = 120;
     static constexpr uint32_t kTickMs = 33;
     static constexpr uint32_t kMaxCandidateInputs = 24;
+    static constexpr uint32_t kRuntimeCharacterCount = 2000;
+    static constexpr uint16_t kRuntimeShardCount = 8;
     static constexpr size_t kMaxOwnedBlobBytes = StrokeOrderStore::kMaxFileBytes;
 
     static StrokeOrderController& GetInstance();
@@ -56,8 +74,10 @@ public:
     StrokeOrderController& operator=(const StrokeOrderController&) = delete;
 
     bool BindStore(const uint8_t* data, size_t size);
+    bool BindCatalog(const uint8_t* data, size_t size, StrokeOrderShardSource* source);
     void Unbind();
     bool is_ready() const;
+    bool MatchesPinyinIndex(const StrokeOrderPinyinIndex& pinyin_index) const;
 
     bool Contains(uint32_t codepoint) const;
     bool SetCandidates(const uint32_t* codepoints, uint32_t count);
@@ -94,17 +114,23 @@ public:
     uint16_t completed_stroke_count() const;
     uint32_t current_progress_permille() const;
     bool in_gap() const;
-    // Host-test helper only. The StrokeView aliases blob bytes and is invalid
-    // after Unbind/LoadCharacter. The LVGL renderer must use CopyLoadedGlyph().
+#if defined(STROKE_ORDER_TESTING)
+    // Compatibility-only borrowed view for the legacy one-SOB1 host harness.
     bool GetStroke(uint16_t index, StrokeOrderStore::StrokeView* out) const;
+#endif
     bool CopyLoadedGlyph(std::vector<DecodedStroke>* out) const;
     bool CopyCandidateGlyph(uint32_t index, uint32_t* codepoint,
                             std::vector<DecodedStroke>* out) const;
 
 private:
+    bool ReadyLocked() const;
+    bool ContainsLocked(uint32_t codepoint) const;
     bool FilterCandidateLocked(uint32_t codepoint);
     bool LoadSelectedLocked(uint32_t codepoint);
+    bool LoadCatalogGlyphLocked(uint32_t codepoint, std::vector<DecodedStroke>* out) const;
+    bool ValidateCatalogShardsLocked() const;
     static bool CopyGlyphLocked(const StrokeOrderStore* store, std::vector<DecodedStroke>* out);
+    void ClearDataLocked();
     void ResetPlaybackLocked();
     void CancelPlaybackLocked();
     uint32_t StrokeDurationLocked(uint16_t index) const;
@@ -116,6 +142,12 @@ private:
     StrokeOrderOwnedBlob owned_blob_;
     size_t owned_blob_size_ = 0;
     StrokeOrderStore store_;
+    StrokeOrderOwnedBlob catalog_blob_;
+    size_t catalog_blob_size_ = 0;
+    StrokeOrderCatalog catalog_;
+    StrokeOrderShardSource* shard_source_ = nullptr;
+    std::vector<DecodedStroke> loaded_glyph_;
+    uint32_t loaded_codepoint_ = 0;
     StrokeOrderUiState state_ = StrokeOrderUiState::Hidden;
     uint32_t candidates_[StrokeOrderLayout::kMaxCandidates] = {};
     uint32_t candidate_count_ = 0;

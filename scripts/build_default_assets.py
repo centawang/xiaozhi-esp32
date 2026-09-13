@@ -225,11 +225,16 @@ def process_emoji_collection(emoji_collection_dir, assets_dir):
     
     # Copy each image from input directory to build/assets directory
     for root, dirs, files in os.walk(emoji_collection_dir):
-        for file in files:
+        dirs.sort()
+        for file in sorted(files):
             if file.lower().endswith(('.png', '.gif')):
                 # Copy file
                 src_file = os.path.join(root, file)
                 dst_file = os.path.join(assets_dir, file)
+                if os.path.exists(dst_file):
+                    raise ValueError(f"emoji asset basename collision: {file}")
+                if len(file.encode('utf-8')) > 31:
+                    raise ValueError(f"emoji asset basename exceeds 31 bytes: {file}")
                 if copy_file(src_file, dst_file):
                     # Get filename without extension
                     filename_without_ext = os.path.splitext(file)[0]
@@ -257,7 +262,8 @@ def process_extra_files(extra_files_dir, assets_dir):
     
     # Copy each file from input directory to build/assets directory
     for root, dirs, files in os.walk(extra_files_dir):
-        for file in files:
+        dirs.sort()
+        for file in sorted(files):
             # Skip hidden files and directories
             if file.startswith('.'):
                 continue
@@ -265,6 +271,10 @@ def process_extra_files(extra_files_dir, assets_dir):
             # Copy file
             src_file = os.path.join(root, file)
             dst_file = os.path.join(assets_dir, file)
+            if os.path.exists(dst_file):
+                raise ValueError(f"extra asset basename collision: {file}")
+            if len(file.encode('utf-8')) > 31:
+                raise ValueError(f"extra asset basename exceeds 31 bytes: {file}")
             if copy_file(src_file, dst_file):
                 extra_files_list.append(file)
     
@@ -385,6 +395,10 @@ def pack_assets_simple(target_path, include_path, out_file, assets_path, max_nam
             
         file_name = os.path.basename(file_path)
         file_size = os.path.getsize(file_path)
+        encoded_name = file_name.encode('utf-8')
+        # mmap_assets_table.asset_name is char[32] and must remain NUL terminated.
+        if len(encoded_name) > max_name_len - 1:
+            raise ValueError(f'asset basename exceeds {max_name_len - 1} bytes: {file_name}')
 
         file_info_list.append((file_name, len(merged_data), file_size, 0, 0))
         # Add 0x5A5A prefix to merged_data
@@ -399,10 +413,9 @@ def pack_assets_simple(target_path, include_path, out_file, assets_path, max_nam
 
     mmap_table = bytearray()
     for file_name, offset, file_size, width, height in file_info_list:
-        if len(file_name) > max_name_len:
-            print(f'Warning: "{file_name}" exceeds {max_name_len} bytes and will be truncated.')
-        fixed_name = file_name.ljust(max_name_len, '\0')[:max_name_len]
-        mmap_table.extend(fixed_name.encode('utf-8'))
+        encoded_name = file_name.encode('utf-8')
+        fixed_name = encoded_name + b'\0' * (max_name_len - len(encoded_name))
+        mmap_table.extend(fixed_name)
         mmap_table.extend(file_size.to_bytes(4, byteorder='little'))
         mmap_table.extend(offset.to_bytes(4, byteorder='little'))
         mmap_table.extend(width.to_bytes(2, byteorder='little'))
@@ -710,7 +723,7 @@ def get_emoji_collection_path(default_emoji_collection, noto_fonts_path, project
     """
     if not default_emoji_collection:
         return None
-    
+
     # Special handling for otto-gif collection
     if default_emoji_collection == 'otto-gif':
         if project_root:
@@ -741,7 +754,8 @@ def get_emoji_collection_path(default_emoji_collection, noto_fonts_path, project
 
 def build_assets_integrated(wakenet_model_paths, multinet_model_paths, text_font_path,
                             emoji_collection_path, extra_files_path, output_path,
-                            multinet_model_info=None, font_bundle_id=None):
+                            multinet_model_info=None, font_bundle_id=None,
+                            max_output_bytes=None, min_free_bytes=0):
     """
     Build assets using integrated functions (no external dependencies)
     """
@@ -780,15 +794,30 @@ def build_assets_integrated(wakenet_model_paths, multinet_model_paths, text_font
         image_file = config_data['image_file']
         pack_assets_simple(assets_dir, include_path, image_file, "assets", int(config_data['name_length']))
         
-        # Copy final assets.bin to output location
+        # Publish the final assets.bin atomically and enforce partition headroom.
         if os.path.exists(image_file):
-            shutil.copy2(image_file, output_path)
+            total_size = os.path.getsize(image_file)
+            if max_output_bytes is not None:
+                remaining = max_output_bytes - total_size
+                if total_size >= max_output_bytes:
+                    raise ValueError(
+                        f"assets image must be strictly smaller than partition: "
+                        f"{total_size} >= {max_output_bytes}"
+                    )
+                if remaining < min_free_bytes:
+                    raise ValueError(
+                        f"assets safety margin too small: {remaining} < {min_free_bytes}"
+                    )
+                print(f"Assets partition margin: {remaining} bytes")
+            publish_tmp = f"{output_path}.tmp-{os.getpid()}"
+            try:
+                shutil.copy2(image_file, publish_tmp)
+                os.replace(publish_tmp, output_path)
+            finally:
+                if os.path.exists(publish_tmp):
+                    os.unlink(publish_tmp)
             print(f"Successfully generated assets.bin: {output_path}")
-            
-            # Show size information
-            total_size = os.path.getsize(output_path)
             print(f"Assets file size: {total_size / 1024:.2f}K ({total_size} bytes)")
-            
             return True
         else:
             print(f"Error: Generated assets.bin not found: {image_file}")
@@ -812,6 +841,10 @@ def main():
     parser.add_argument('--esp_sr_model_path', help='Path to ESP-SR model directory')
     parser.add_argument('--noto_fonts_path', help='Path to noto-fonts component directory')
     parser.add_argument('--extra_files', help='Path to extra files directory to be included in assets')
+    parser.add_argument('--max_output_bytes', type=lambda value: int(value, 0),
+                        help='Fail unless assets.bin is strictly smaller than this size')
+    parser.add_argument('--min_free_bytes', type=lambda value: int(value, 0), default=0,
+                        help='Required remaining bytes below max_output_bytes')
     
     args = parser.parse_args()
     
@@ -925,7 +958,8 @@ def main():
     # Build the assets
     success = build_assets_integrated(
         wakenet_model_paths, multinet_model_paths, text_font_path, emoji_collection_path,
-        extra_files_path, args.output, multinet_model_info, font_bundle_id)
+        extra_files_path, args.output, multinet_model_info, font_bundle_id,
+        args.max_output_bytes, args.min_free_bytes)
     
     if not success:
         sys.exit(1)

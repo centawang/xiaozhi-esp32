@@ -5,6 +5,7 @@
 #include "board.h"
 #include "display.h"
 #include "lvgl_theme.h"
+#include "stroke_order/stroke_order_assets.h"
 #include "stroke_order/stroke_order_parse.h"
 
 #include <esp_log.h>
@@ -23,6 +24,31 @@ constexpr int kGridInset = 12;
 constexpr int kOutlineWidth = 2;
 constexpr int kCurrentWidth = 4;
 constexpr int kMarkerRadius = 5;
+
+class AssetsStrokeOrderShardSource final : public StrokeOrderShardSource {
+public:
+    bool AcquireShard(const char* name, const uint8_t** data, size_t* size) override {
+        if (active_ || name == nullptr || data == nullptr || size == nullptr) {
+            return false;
+        }
+        void* mapped = nullptr;
+        size_t mapped_size = 0;
+        if (!Assets::GetInstance().GetAssetData(name, mapped, mapped_size)) {
+            return false;
+        }
+        active_ = true;
+        *data = static_cast<const uint8_t*>(mapped);
+        *size = mapped_size;
+        return true;
+    }
+
+    void ReleaseShard() override { active_ = false; }
+
+private:
+    bool active_ = false;
+};
+
+AssetsStrokeOrderShardSource kAssetShardSource;
 
 lv_color_t MixLight(lv_color_t color, lv_color_t background) {
     return lv_color_mix(color, background, LV_OPA_30);
@@ -142,8 +168,7 @@ bool StrokeOrderView::SuspendAssets() {
     }
     lifecycle_.SuspendAssets();
     InvalidateVisualsLocked(true);
-    controller_->Unbind();
-    pinyin_index_.Unbind();
+    SuspendStrokeOrderAssets(controller_, &pinyin_index_);
     return true;
 #endif
 }
@@ -448,21 +473,25 @@ bool StrokeOrderView::HasPointerIndev() const {
 bool StrokeOrderView::RebindAssetsLocked() {
     lifecycle_.SuspendAssets();
     InvalidateVisualsLocked(true);
-    controller_->Unbind();
-    pinyin_index_.Unbind();
+    SuspendStrokeOrderAssets(controller_, &pinyin_index_);
 
-    void* ptr = nullptr;
-    size_t size = 0;
-    const bool bound = Assets::GetInstance().GetAssetData("stroke_order.bin", ptr, size) &&
-                       controller_->BindStore(static_cast<const uint8_t*>(ptr), size);
+    void* catalog_ptr = nullptr;
+    size_t catalog_size = 0;
     void* pinyin_ptr = nullptr;
     size_t pinyin_size = 0;
-    const bool pinyin_bound =
-        bound && Assets::GetInstance().GetAssetData("stroke_pinyin.bin", pinyin_ptr, pinyin_size) &&
-        pinyin_index_.Bind(static_cast<const uint8_t*>(pinyin_ptr), pinyin_size);
-    if (bound && !pinyin_bound) {
-        pinyin_index_.Unbind();
-        ESP_LOGW(TAG, "SPY1 missing or invalid; SO entry stays exact-only/fallback");
+    const bool found =
+        Assets::GetInstance().GetAssetData("stroke_cat.bin", catalog_ptr, catalog_size) &&
+        Assets::GetInstance().GetAssetData("stroke_pinyin.bin", pinyin_ptr, pinyin_size);
+    const bool bound =
+        found && RebindStrokeOrderAssets(controller_, &pinyin_index_,
+                                         static_cast<const uint8_t*>(catalog_ptr), catalog_size,
+                                         &kAssetShardSource,
+                                         static_cast<const uint8_t*>(pinyin_ptr), pinyin_size);
+    if (bound) {
+        ESP_LOGI(TAG,
+                 "stroke metadata ready catalog=%u pinyin=%u bytes; all shards validated with "
+                 "transient views",
+                 static_cast<unsigned>(catalog_size), static_cast<unsigned>(pinyin_size));
     }
     const bool has_pointer = HasPointerIndev();
     lifecycle_.SetAssetsReady(bound);
@@ -471,7 +500,7 @@ bool StrokeOrderView::RebindAssetsLocked() {
     lifecycle_.RebuildSurface();
     ReevaluateEntryLocked();
     if (!bound) {
-        ESP_LOGW(TAG, "stroke asset missing, oversized, or invalid; entry hidden");
+        ESP_LOGW(TAG, "stroke catalog/shard/pinyin set missing or invalid; entry hidden");
     } else if (!has_pointer) {
         ESP_LOGW(TAG, "no LVGL pointer indev; 笔划 entry hidden");
     }

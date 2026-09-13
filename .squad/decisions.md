@@ -81,3 +81,8 @@ Lead 和 Tester 执行任务时统一使用 gpt-5.6-sol 模型，thinking level 
 ## User directive — 2026-09-12T13:45:20.016Z
 
 500 字固件真机反馈：SO 可点击，但点击后直接显示本地候选，没有进入语音选字。当前代码 InitializeProtocol 在 OTA 同时有 MQTT/WebSocket 时优先 MQTT，而 MQTT stroke voice capability 明确为 false，因此该症状与 MQTT 本地降级路径一致。下一修复优先让启用本地笔划的构建在两种配置同时存在时选择 WebSocket，只有 MQTT 时继续安全降级。
+
+<!-- pi-squad:4472851b5c1da515ab6ec95ab8a22787b673c33eac973b31ec4be20f3fed822b -->
+## User directive — 2026-09-12T16:34:52.504Z
+
+用户要求在其离线期间持续多轮迭代，将笔划功能扩展为可直接烧录的 M5Stack CoreS3 常见 2000 字技术原型版本；未决问题继续采用协调者推荐，必须完成实现、审查、测试、clean build、烧录包与硬件残余风险说明后再停止。

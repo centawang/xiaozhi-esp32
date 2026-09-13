@@ -25,6 +25,7 @@ OFFICIAL_PDF_SHA256 = "af85c706a53d3b3bbad818bcce7415ac9a2284ea14f79fe7f54ce1248
 OFFICIAL_PDF_BYTES = 100606660
 OFFICIAL_RANGE_START = 1
 OFFICIAL_RANGE_END = 500
+OFFICIAL_RANGE_END_2000 = 2000
 
 TRANSCRIPTION_REPO = (
     "https://github.com/leonsilicon/table-of-general-standard-chinese-characters"
@@ -159,13 +160,14 @@ def load_tier1_characters(table_json: str) -> List[str]:
     return [str(item) for item in tier1]
 
 
-def select_official_500(table_json: str) -> List[Dict[str, object]]:
-    """Return ranks 1-500 only from the module-pinned transcription checkout."""
+def _select_official(table_json: str, expected_count: int) -> List[Dict[str, object]]:
     verify_pinned_transcription(table_json)
     tier1 = load_tier1_characters(table_json)
-    if len(tier1) < OFFICIAL_RANGE_END:
-        raise SelectionError("transcription aid does not contain 500 first-tier characters")
-    selected = tier1[OFFICIAL_RANGE_START - 1 : OFFICIAL_RANGE_END]
+    if len(tier1) < expected_count:
+        raise SelectionError(
+            f"transcription aid does not contain {expected_count} first-tier characters"
+        )
+    selected = tier1[OFFICIAL_RANGE_START - 1 : expected_count]
     rows = []
     seen = set()
     for index, character in enumerate(selected, start=OFFICIAL_RANGE_START):
@@ -188,13 +190,25 @@ def select_official_500(table_json: str) -> List[Dict[str, object]]:
                 "codepoint_int": codepoint,
             }
         )
-    verify_selection_rows(rows)
+    verify_selection_rows(rows, expected_count)
     return rows
 
 
-def verify_selection_rows(rows: Sequence[Dict[str, object]]) -> None:
-    if len(rows) != OFFICIAL_RANGE_END:
-        raise SelectionError(f"selection must contain exactly {OFFICIAL_RANGE_END} rows")
+def select_official_500(table_json: str) -> List[Dict[str, object]]:
+    """Return ranks 1-500 only from the module-pinned transcription checkout."""
+    return _select_official(table_json, OFFICIAL_RANGE_END)
+
+
+def select_official_2000(table_json: str) -> List[Dict[str, object]]:
+    """Return ranks 1-2000 only from the module-pinned transcription checkout."""
+    return _select_official(table_json, OFFICIAL_RANGE_END_2000)
+
+
+def verify_selection_rows(
+    rows: Sequence[Dict[str, object]], expected_count: int = OFFICIAL_RANGE_END
+) -> None:
+    if len(rows) != expected_count:
+        raise SelectionError(f"selection must contain exactly {expected_count} rows")
     seen_chars = set()
     seen_cps = set()
     for index, row in enumerate(rows, start=1):
@@ -207,9 +221,9 @@ def verify_selection_rows(rows: Sequence[Dict[str, object]]) -> None:
         if match is None or int(match.group(1), 16) != ord(character):
             raise SelectionError("text codepoint/character mismatch")
         if rank != index:
-            raise SelectionError("rank must be the official numbering order 1-500")
+            raise SelectionError("rank must match continuous official numbering")
         if official != f"{index:04d}":
-            raise SelectionError("official_number must be 0001-0500 with no gaps")
+            raise SelectionError("official_number must be continuous with no gaps")
         if len(character) != 1:
             raise SelectionError("selection character must be one scalar")
         if codepoint < MIN_TARGET_CODEPOINT or codepoint > MAX_TARGET_CODEPOINT:
@@ -220,12 +234,14 @@ def verify_selection_rows(rows: Sequence[Dict[str, object]]) -> None:
             raise SelectionError("character/codepoint mismatch")
         seen_chars.add(character)
         seen_cps.add(codepoint)
-    if len(seen_chars) != OFFICIAL_RANGE_END or len(seen_cps) != OFFICIAL_RANGE_END:
-        raise SelectionError("selection is not 500 unique Basic CJK characters")
+    if len(seen_chars) != expected_count or len(seen_cps) != expected_count:
+        raise SelectionError(f"selection is not {expected_count} unique Basic CJK characters")
 
 
-def write_selection_csv(rows: Sequence[Dict[str, object]], path: Path) -> None:
-    verify_selection_rows(rows)
+def write_selection_csv(
+    rows: Sequence[Dict[str, object]], path: Path, expected_count: int = OFFICIAL_RANGE_END
+) -> None:
+    verify_selection_rows(rows, expected_count)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -236,11 +252,13 @@ def write_selection_csv(rows: Sequence[Dict[str, object]], path: Path) -> None:
             )
 
 
-def write_charset(rows: Sequence[Dict[str, object]], path: Path) -> None:
-    verify_selection_rows(rows)
+def write_charset(
+    rows: Sequence[Dict[str, object]], path: Path, expected_count: int = OFFICIAL_RANGE_END
+) -> None:
+    verify_selection_rows(rows, expected_count)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Prototype charset: 通用规范汉字表 一级字表 0001-0500.",
+        f"# Prototype charset: 通用规范汉字表 一级字表 0001-{expected_count:04d}.",
         "# Not official certification. Not a commercial release.",
         "# Dual-person official PDF verification has not been completed.",
     ]
@@ -249,7 +267,9 @@ def write_charset(rows: Sequence[Dict[str, object]], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def load_selection_csv(path: Path) -> List[Dict[str, object]]:
+def load_selection_csv(
+    path: Path, expected_count: int = OFFICIAL_RANGE_END
+) -> List[Dict[str, object]]:
     raw = path.read_bytes()
     try:
         text = raw.decode("utf-8")
@@ -279,7 +299,7 @@ def load_selection_csv(path: Path) -> List[Dict[str, object]]:
                 "codepoint_int": codepoint,
             }
         )
-    verify_selection_rows(rows)
+    verify_selection_rows(rows, expected_count)
     return rows
 
 
@@ -290,6 +310,7 @@ def file_sha256(path: Path) -> str:
 def official_source_lock(
     table_json: Path,
     pdf_path: Path | None = None,
+    range_end: int = OFFICIAL_RANGE_END,
 ) -> Dict[str, object]:
     transcription = verify_pinned_transcription(str(table_json))
     pdf_sha = OFFICIAL_PDF_SHA256
@@ -313,7 +334,7 @@ def official_source_lock(
             "document": OFFICIAL_DOCUMENT,
             "page": OFFICIAL_PAGE,
             "pdf": OFFICIAL_PDF,
-            "range": "一级字表 0001-0500",
+            "range": f"一级字表 0001-{range_end:04d}",
             "sha256": pdf_sha,
             "title": OFFICIAL_TITLE,
         },

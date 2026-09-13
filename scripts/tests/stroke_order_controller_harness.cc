@@ -30,13 +30,12 @@ std::vector<uint8_t> ReadBinary(const std::string& path) {
                                 std::istreambuf_iterator<char>());
 }
 
-bool MedianDelta(const StrokeOrderStore::StrokeView& stroke, int32_t* dx, int32_t* dy) {
-    StrokeOrderStore::Point first;
-    StrokeOrderStore::Point last;
-    if (!stroke.GetMedianPoint(0, &first) ||
-        !stroke.GetMedianPoint(static_cast<uint16_t>(stroke.median_count() - 1), &last)) {
+bool MedianDelta(const StrokeOrderController::DecodedStroke& stroke, int32_t* dx, int32_t* dy) {
+    if (stroke.median.size() < 2) {
         return false;
     }
+    const auto& first = stroke.median.front();
+    const auto& last = stroke.median.back();
     *dx = static_cast<int32_t>(last.x) - static_cast<int32_t>(first.x);
     *dy = static_cast<int32_t>(last.y) - static_cast<int32_t>(first.y);
     return true;
@@ -119,11 +118,9 @@ int main(int argc, char** argv) {
     Expect(controller.CopyLoadedGlyph(&copied) && copied.size() == 1, "copy 一 glyph");
     Expect(copied[0].median.size() >= 2, "copied 一 median");
 
-    StrokeOrderStore::StrokeView stroke;
-    Expect(controller.GetStroke(0, &stroke), "get 一 stroke");
     int32_t dx = 0;
     int32_t dy = 0;
-    Expect(MedianDelta(stroke, &dx, &dy), "一 median ends");
+    Expect(MedianDelta(copied[0], &dx, &dy), "一 median ends");
     Expect(dx > 200, "一 median moves right");
     const int32_t ady = dy < 0 ? -dy : dy;
     Expect(ady < dx, "一 is more horizontal than vertical");
@@ -155,9 +152,10 @@ int main(int argc, char** argv) {
     Expect(controller.state() == StrokeOrderUiState::Candidates, "candidates after back");
     Expect(controller.SelectCandidate(1), "select 人");
     Expect(controller.stroke_count() == 2, "人 has two strokes");
-    Expect(controller.GetStroke(0, &stroke) && MedianDelta(stroke, &dx, &dy), "人 stroke 0");
+    Expect(controller.CopyLoadedGlyph(&copied) && copied.size() == 2, "copy 人 glyph");
+    Expect(MedianDelta(copied[0], &dx, &dy), "人 stroke 0");
     Expect(dx < 0 && dy > 0, "人 first stroke down-left in y-down");
-    Expect(controller.GetStroke(1, &stroke) && MedianDelta(stroke, &dx, &dy), "人 stroke 1");
+    Expect(MedianDelta(copied[1], &dx, &dy), "人 stroke 1");
     Expect(dx > 0 && dy > 0, "人 second stroke down-right in y-down");
     Expect(controller.StepForward(0), "人 step first stroke at monotonic zero");
     Expect(controller.state() == StrokeOrderUiState::Paused, "人 paused after step");
@@ -196,7 +194,9 @@ int main(int argc, char** argv) {
     Expect(controller.state() == StrokeOrderUiState::Hidden, "unbind hides");
     Expect(!controller.OpenCandidates() && !asset_lifecycle.TryOpenOverlay(),
            "late action after unmap is rejected");
-    Expect(!controller.GetStroke(0, &stroke), "GetStroke invalid after unbind");
+    std::vector<StrokeOrderController::DecodedStroke> after_unbind;
+    Expect(!controller.CopyLoadedGlyph(&after_unbind),
+           "owned controller glyph cleared after unbind");
     Expect(copied.size() == 3 && copied[0].median.size() == first_median,
            "copied glyph survives unbind");
     std::vector<uint8_t> corrupt(blob.size(), 0);

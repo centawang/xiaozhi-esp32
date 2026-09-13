@@ -713,3 +713,16 @@ plain `new[]` 是否确实落到外部 RAM 必须真机用 heap caps/指针属�
 - 最终 host suite 实际结果为 118 tests passed、1 个需要外部 pinned transcription checkout 的既有测试 skipped。
 - ESP-IDF v6.0.2 CoreS3 clean build 在 `/tmp/xiaozhi-stroke-autostop-idf602-20260912-230839` 成功，确认 `CONFIG_STROKE_ORDER_LOCAL=y`；app partition 仍有 0x129970 bytes（30%）余量。
 - 底层 `AudioEngine::EnableVoiceProcessing()` 仍是 void；当前可观察成功边界是 AudioService 正在运行、engine 初始化成功、且 running event bit 已置位。真机麦克风/VAD 与真实网络竞态仍不能由 host/build 证明。
+
+<!-- pi-squad:70bbbe819456be9fcc01a46a410d3bbf1910c70dba482969d6f0e4d81f9cf85e -->
+## 2026-09-12T17:08:18.982Z — stroke-2000-sharded-library-retry
+
+已在现有 partial 上原地完成 `stroke-2000-sharded-library`，完整报告写入 `/Users/mandyw/.pi/agent/sessions/--Users-mandyw-git-xiaozhi-esp32--/subagent-artifacts/outputs/aa39ef10-4f7a-424f-b1c3-f9354028c267/stroke-2000-sharded-library-retry.md`。实现了严格 SCB1 Python/C++ 校验、2000 字与 8 shard 唯一映射、事务式 catalog+8 shards+SPY1 rebind、单一有界 shard lease、owned glyph cache、同步 suspend 失效、SPY1 2048 上限/63,618 B 与无静默截断、最小 runtime pack、闭合 hash/原子发布/容量门禁及相应文档测试。未 commit/stage/reset/clean，未烧录或生成 dist；Stick-S3、local emoji、`.squad` 与其他用户工作均保留。最终以固定输入重生成的 29 个 fixture 文件逐 SHA-256 完全一致；host 全量 127 tests 全通过且无 skip；clang-format 19.1.7 dry-run、py_compile、git diff --check 均通过；仓库外 ESP-IDF 6.0.2 CoreS3 clean build 成功。固件 `xiaozhi.bin` 2,914,800 B（SHA-256 `48fbf45cddc2a87ecf7e38cb10b21cd1326b88cdeca37a06371c79461c75b7d0`）；assets 7,568,207 B（SHA-256 `54453b5232408dfb8cf8dadbde9dd5d93a1bdb90f213df69d7ff075210783dd0`），8 MiB 分区余量 820,401 B，满足至少 256 KiB。
+
+- 2000 字 corpus 恰为 8×250 个字符，SOB1 shard 总计 5,800,492 B，最大 shard 911,688 B；SCB1 为 24,352 B，SHA-256 `91779189b45526ab47cff2927b8da35e345e967a84e72096221e658e2cc919e4`。
+- SPY1 v1 实测 63,618 B，距 64 KiB 上限余 1,918 B，含 2000 characters、1047 groups、最大 group 29 members；Python/C++ character/group validator 上限均为 2048。
+- Production rebind 只有在 SPY1、SCB1、全部 8 shards 及两者的 2000 个 codepoint/rank 映射全部一致时才就绪；缺失、损坏、交换或部分更新均 fail closed。
+- Controller 的 shard source 采用 Acquire/Release lease；实际 UBSan C++ harness 观测 `max_active=1`、`max_bytes=911688`，生产路径不保留跨锁或跨 asset generation 的 StrokeView。
+- Runtime stroke package 恰含 15 个文件：8 shards、catalog、pinyin、runtime manifest、APL、Unicode license、NOTICE、闭合 SHA256SUMS；selection/charset/coverage/source/per-shard manifests 不进入 runtime pack。
+- ESP-IDF 6.0.2 外部 clean build 的完整 generated assets 为 7,568,207 B，8 MiB assets 分区余量 820,401 B；最终 image 内 15 个 stroke 文件的 size/hash 与 runtime package 一致。
+- 当前工作树同时存在用户的 Stick-S3、emoji、`.squad` 和 8m partition 工作；本任务没有回滚或清理这些内容，并保留了共享 CMake/build_default_assets 中的既有 local emoji hunk。

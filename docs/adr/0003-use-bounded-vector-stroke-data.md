@@ -13,5 +13,6 @@ Arbitrary SVG, scripts, external resources, frame images, and inferred font outl
 The device consumes only the compact integer format produced by
 `scripts/convert_stroke_order.py` (see `docs/stroke-order-data.md`). Curve
 flattening and y-axis conversion happen on the host. Synthetic test fixtures and
-prototype bins are not a published 字库. The ~500-character target still needs an
-explicit charset, pinned commit, and license files before import.
+prototype bins are not a published 字库. The original ~500-character target was
+superseded by the eight-shard 2000-character strategy in ADR 0005; both retain
+explicit charsets, pinned commits, license files, and prototype-only boundaries.

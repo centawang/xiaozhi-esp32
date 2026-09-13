@@ -1,5 +1,7 @@
 #include "stroke_order/stroke_order_controller.h"
 
+#include "stroke_order/stroke_order_pinyin.h"
+
 #include <cstring>
 
 #if defined(ESP_PLATFORM)
@@ -10,6 +12,34 @@ static const char* TAG = "StrokeOrder";
 namespace {
 
 constexpr uint32_t kPermille = 1000;
+
+class ScopedShardView {
+public:
+    ScopedShardView(StrokeOrderShardSource* source, const char* name) : source_(source) {
+        if (source_ != nullptr) {
+            acquired_ = source_->AcquireShard(name, &data_, &size_);
+        }
+    }
+
+    ~ScopedShardView() {
+        if (acquired_) {
+            source_->ReleaseShard();
+        }
+    }
+
+    ScopedShardView(const ScopedShardView&) = delete;
+    ScopedShardView& operator=(const ScopedShardView&) = delete;
+
+    bool valid() const { return acquired_ && data_ != nullptr; }
+    const uint8_t* data() const { return data_; }
+    size_t size() const { return size_; }
+
+private:
+    StrokeOrderShardSource* source_ = nullptr;
+    const uint8_t* data_ = nullptr;
+    size_t size_ = 0;
+    bool acquired_ = false;
+};
 
 uint32_t ApproxLength(StrokeOrderStore::Point a, StrokeOrderStore::Point b) {
     const int32_t dx = static_cast<int32_t>(a.x) - static_cast<int32_t>(b.x);
@@ -33,14 +63,7 @@ StrokeOrderController::StrokeOrderController() = default;
 
 bool StrokeOrderController::BindStore(const uint8_t* data, size_t size) {
     std::lock_guard<std::mutex> lock(mutex_);
-    CancelPlaybackLocked();
-    store_.Unbind();
-    owned_blob_.reset();
-    owned_blob_size_ = 0;
-    candidate_count_ = 0;
-    selected_codepoint_ = 0;
-    state_ = StrokeOrderUiState::Hidden;
-
+    ClearDataLocked();
     if (data == nullptr || size == 0 || size > kMaxOwnedBlobBytes) {
         return false;
     }
@@ -58,49 +81,93 @@ bool StrokeOrderController::BindStore(const uint8_t* data, size_t size) {
         return false;
     }
     std::memcpy(copy.get(), data, size);
-
     StrokeOrderStore validated;
     if (!validated.Bind(copy.get(), size) || validated.character_count() == 0) {
         return false;
     }
-
     owned_blob_ = std::move(copy);
     owned_blob_size_ = size;
     if (!store_.Bind(owned_blob_.get(), owned_blob_size_)) {
-        store_.Unbind();
-        owned_blob_.reset();
-        owned_blob_size_ = 0;
-        candidate_count_ = 0;
+        ClearDataLocked();
         return false;
     }
     return true;
 }
 
+bool StrokeOrderController::BindCatalog(const uint8_t* data, size_t size,
+                                        StrokeOrderShardSource* source) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ClearDataLocked();
+    if (data == nullptr || source == nullptr || size == 0 ||
+        size > StrokeOrderCatalog::kMaxFileBytes) {
+        return false;
+    }
+#if defined(ESP_PLATFORM)
+    StrokeOrderOwnedBlob copy = StrokeOrderAllocateOwned(size, TAG);
+#else
+    StrokeOrderOwnedBlob copy = StrokeOrderAllocateOwned(size, "StrokeOrder");
+#endif
+    if (copy == nullptr) {
+#if defined(ESP_PLATFORM)
+        ESP_LOGE(TAG, "SCB1 catalog copy failed closed size=%u", static_cast<unsigned>(size));
+#endif
+        return false;
+    }
+    std::memcpy(copy.get(), data, size);
+    catalog_blob_ = std::move(copy);
+    catalog_blob_size_ = size;
+    shard_source_ = source;
+    if (!catalog_.Bind(catalog_blob_.get(), catalog_blob_size_) ||
+        catalog_.character_count() != kRuntimeCharacterCount ||
+        catalog_.shard_count() != kRuntimeShardCount || !ValidateCatalogShardsLocked()) {
+        ClearDataLocked();
+        return false;
+    }
+#if defined(ESP_PLATFORM)
+    ESP_LOGI(TAG, "SCB1 ready chars=%u shards=%u catalog=%u shard_total=%u",
+             static_cast<unsigned>(catalog_.character_count()),
+             static_cast<unsigned>(catalog_.shard_count()), static_cast<unsigned>(size),
+             static_cast<unsigned>(catalog_.total_shard_bytes()));
+#endif
+    return true;
+}
+
 void StrokeOrderController::Unbind() {
     std::lock_guard<std::mutex> lock(mutex_);
-    CancelPlaybackLocked();
-    store_.Unbind();
-    owned_blob_.reset();
-    owned_blob_size_ = 0;
-    candidate_count_ = 0;
-    selected_codepoint_ = 0;
-    state_ = StrokeOrderUiState::Hidden;
+    ClearDataLocked();
 }
 
 bool StrokeOrderController::is_ready() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return store_.is_bound() && store_.character_count() > 0;
+    return ReadyLocked();
+}
+
+bool StrokeOrderController::MatchesPinyinIndex(const StrokeOrderPinyinIndex& pinyin_index) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!catalog_.is_bound() || !pinyin_index.is_bound() ||
+        catalog_.character_count() != pinyin_index.character_count()) {
+        return false;
+    }
+    for (uint32_t i = 0; i < catalog_.character_count(); ++i) {
+        StrokeOrderCatalog::Entry entry;
+        uint16_t pinyin_rank = 0;
+        if (!catalog_.GetEntry(i, &entry) || !pinyin_index.GetRank(entry.codepoint, &pinyin_rank) ||
+            pinyin_rank != entry.rank) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool StrokeOrderController::Contains(uint32_t codepoint) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return store_.Contains(codepoint);
+    return ContainsLocked(codepoint);
 }
 
 bool StrokeOrderController::SetCandidates(const uint32_t* codepoints, uint32_t count) {
     std::lock_guard<std::mutex> lock(mutex_);
     candidate_count_ = 0;
-    if (!store_.is_bound() || codepoints == nullptr || count == 0) {
+    if (!ReadyLocked() || codepoints == nullptr || count == 0) {
         return false;
     }
     const uint32_t bounded_count = count < kMaxCandidateInputs ? count : kMaxCandidateInputs;
@@ -132,7 +199,7 @@ bool StrokeOrderController::SetCandidatesFromPrimary(uint32_t primary,
 
 bool StrokeOrderController::EnterConnecting() {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!store_.is_bound()) {
+    if (!ReadyLocked()) {
         return false;
     }
     CancelPlaybackLocked();
@@ -144,7 +211,7 @@ bool StrokeOrderController::EnterConnecting() {
 
 bool StrokeOrderController::EnterAwaitingSpeech() {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!store_.is_bound()) {
+    if (!ReadyLocked()) {
         return false;
     }
     CancelPlaybackLocked();
@@ -177,7 +244,7 @@ bool StrokeOrderController::EnterError() {
 
 bool StrokeOrderController::OpenCandidates() {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!store_.is_bound() || candidate_count_ == 0) {
+    if (!ReadyLocked() || candidate_count_ == 0) {
         return false;
     }
     CancelPlaybackLocked();
@@ -234,7 +301,7 @@ bool StrokeOrderController::Replay() {
         state_ != StrokeOrderUiState::Completed) {
         return false;
     }
-    if (!store_.has_character()) {
+    if (loaded_glyph_.empty()) {
         return false;
     }
     ResetPlaybackLocked();
@@ -253,22 +320,22 @@ bool StrokeOrderController::StepForward(uint64_t monotonic_ms) {
     }
     has_last_step_ms_ = true;
     last_step_ms_ = monotonic_ms;
-    if (!store_.has_character() || store_.stroke_count() == 0) {
+    if (loaded_glyph_.empty()) {
         return false;
     }
     if (in_gap_) {
         in_gap_ = false;
         gap_elapsed_ms_ = 0;
         current_stroke_ = static_cast<uint16_t>(current_stroke_ + 1);
-        if (current_stroke_ >= store_.stroke_count()) {
-            current_stroke_ = static_cast<uint16_t>(store_.stroke_count() - 1);
+        if (current_stroke_ >= loaded_glyph_.size()) {
+            current_stroke_ = static_cast<uint16_t>(loaded_glyph_.size() - 1);
             stroke_elapsed_ms_ = StrokeDurationLocked(current_stroke_);
             state_ = StrokeOrderUiState::Completed;
             return true;
         }
     }
     stroke_elapsed_ms_ = StrokeDurationLocked(current_stroke_);
-    if (current_stroke_ + 1 >= store_.stroke_count()) {
+    if (current_stroke_ + 1 >= loaded_glyph_.size()) {
         state_ = StrokeOrderUiState::Completed;
         in_gap_ = false;
         return true;
@@ -286,7 +353,7 @@ bool StrokeOrderController::BackToCandidates() {
     if (state_ == StrokeOrderUiState::Hidden) {
         return false;
     }
-    if (!store_.is_bound() || candidate_count_ == 0) {
+    if (!ReadyLocked() || candidate_count_ == 0) {
         CancelPlaybackLocked();
         state_ = StrokeOrderUiState::Hidden;
         return false;
@@ -326,7 +393,7 @@ void StrokeOrderController::Tick(uint32_t dt_ms) {
     if (state_ != StrokeOrderUiState::Animating) {
         return;
     }
-    if (!store_.has_character() || store_.stroke_count() == 0) {
+    if (loaded_glyph_.empty()) {
         state_ = StrokeOrderUiState::Error;
         return;
     }
@@ -339,8 +406,8 @@ void StrokeOrderController::Tick(uint32_t dt_ms) {
         gap_elapsed_ms_ = 0;
         current_stroke_ = static_cast<uint16_t>(current_stroke_ + 1);
         stroke_elapsed_ms_ = 0;
-        if (current_stroke_ >= store_.stroke_count()) {
-            current_stroke_ = static_cast<uint16_t>(store_.stroke_count() - 1);
+        if (current_stroke_ >= loaded_glyph_.size()) {
+            current_stroke_ = static_cast<uint16_t>(loaded_glyph_.size() - 1);
             stroke_elapsed_ms_ = StrokeDurationLocked(current_stroke_);
             state_ = StrokeOrderUiState::Completed;
         }
@@ -352,7 +419,7 @@ void StrokeOrderController::Tick(uint32_t dt_ms) {
         return;
     }
     stroke_elapsed_ms_ = duration;
-    if (current_stroke_ + 1 >= store_.stroke_count()) {
+    if (current_stroke_ + 1 >= loaded_glyph_.size()) {
         state_ = StrokeOrderUiState::Completed;
         return;
     }
@@ -362,13 +429,7 @@ void StrokeOrderController::Tick(uint32_t dt_ms) {
 
 void StrokeOrderController::Shutdown() {
     std::lock_guard<std::mutex> lock(mutex_);
-    CancelPlaybackLocked();
-    store_.Unbind();
-    owned_blob_.reset();
-    owned_blob_size_ = 0;
-    candidate_count_ = 0;
-    selected_codepoint_ = 0;
-    state_ = StrokeOrderUiState::Hidden;
+    ClearDataLocked();
     entry_x_ = 0;
     entry_y_ = 0;
     entry_w_ = 0;
@@ -428,12 +489,12 @@ bool StrokeOrderController::GetCandidate(uint32_t index, uint32_t* codepoint) co
 
 uint32_t StrokeOrderController::loaded_codepoint() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return store_.loaded_codepoint();
+    return loaded_codepoint_;
 }
 
 uint16_t StrokeOrderController::stroke_count() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return store_.stroke_count();
+    return static_cast<uint16_t>(loaded_glyph_.size());
 }
 
 uint16_t StrokeOrderController::current_stroke() const {
@@ -444,7 +505,7 @@ uint16_t StrokeOrderController::current_stroke() const {
 uint16_t StrokeOrderController::completed_stroke_count() const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ == StrokeOrderUiState::Completed) {
-        return store_.stroke_count();
+        return static_cast<uint16_t>(loaded_glyph_.size());
     }
     if (in_gap_) {
         return static_cast<uint16_t>(current_stroke_ + 1);
@@ -476,17 +537,20 @@ bool StrokeOrderController::in_gap() const {
     return in_gap_;
 }
 
+#if defined(STROKE_ORDER_TESTING)
 bool StrokeOrderController::GetStroke(uint16_t index, StrokeOrderStore::StrokeView* out) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return store_.GetStroke(index, out);
 }
+#endif
 
 bool StrokeOrderController::CopyLoadedGlyph(std::vector<DecodedStroke>* out) const {
     if (out == nullptr) {
         return false;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    return CopyGlyphLocked(&store_, out);
+    *out = loaded_glyph_;
+    return !out->empty();
 }
 
 bool StrokeOrderController::CopyCandidateGlyph(uint32_t index, uint32_t* codepoint,
@@ -495,15 +559,23 @@ bool StrokeOrderController::CopyCandidateGlyph(uint32_t index, uint32_t* codepoi
         return false;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    if (index >= candidate_count_ || owned_blob_ == nullptr || owned_blob_size_ == 0) {
+    if (index >= candidate_count_) {
         return false;
     }
-    StrokeOrderStore snapshot;
-    if (!snapshot.Bind(owned_blob_.get(), owned_blob_size_) ||
-        !snapshot.LoadCharacter(candidates_[index]) || !CopyGlyphLocked(&snapshot, out)) {
-        return false;
+    const uint32_t candidate = candidates_[index];
+    if (catalog_.is_bound()) {
+        if (!LoadCatalogGlyphLocked(candidate, out)) {
+            return false;
+        }
+    } else {
+        StrokeOrderStore snapshot;
+        if (owned_blob_ == nullptr || owned_blob_size_ == 0 ||
+            !snapshot.Bind(owned_blob_.get(), owned_blob_size_) ||
+            !snapshot.LoadCharacter(candidate) || !CopyGlyphLocked(&snapshot, out)) {
+            return false;
+        }
     }
-    *codepoint = candidates_[index];
+    *codepoint = candidate;
     return true;
 }
 
@@ -541,15 +613,19 @@ bool StrokeOrderController::CopyGlyphLocked(const StrokeOrderStore* store,
     return !out->empty();
 }
 
+bool StrokeOrderController::ReadyLocked() const {
+    return (catalog_.is_bound() && shard_source_ != nullptr && catalog_.character_count() > 0) ||
+           (store_.is_bound() && store_.character_count() > 0);
+}
+
+bool StrokeOrderController::ContainsLocked(uint32_t codepoint) const {
+    return catalog_.is_bound() ? catalog_.Contains(codepoint) : store_.Contains(codepoint);
+}
+
 bool StrokeOrderController::FilterCandidateLocked(uint32_t codepoint) {
-    if (candidate_count_ >= StrokeOrderLayout::kMaxCandidates) {
-        return false;
-    }
-    if (codepoint < StrokeOrderStore::kMinTargetCodepoint ||
-        codepoint > StrokeOrderStore::kMaxTargetCodepoint) {
-        return false;
-    }
-    if (owned_blob_ == nullptr || owned_blob_size_ == 0 || !store_.Contains(codepoint)) {
+    if (candidate_count_ >= StrokeOrderLayout::kMaxCandidates ||
+        codepoint < StrokeOrderStore::kMinTargetCodepoint ||
+        codepoint > StrokeOrderStore::kMaxTargetCodepoint || !ContainsLocked(codepoint)) {
         return false;
     }
     for (uint32_t j = 0; j < candidate_count_; ++j) {
@@ -557,10 +633,18 @@ bool StrokeOrderController::FilterCandidateLocked(uint32_t codepoint) {
             return false;
         }
     }
-    StrokeOrderStore snapshot;
-    if (!snapshot.Bind(owned_blob_.get(), owned_blob_size_) || !snapshot.LoadCharacter(codepoint) ||
-        snapshot.stroke_count() == 0) {
-        return false;
+    std::vector<DecodedStroke> decoded;
+    if (catalog_.is_bound()) {
+        if (!LoadCatalogGlyphLocked(codepoint, &decoded)) {
+            return false;
+        }
+    } else {
+        StrokeOrderStore snapshot;
+        if (owned_blob_ == nullptr || owned_blob_size_ == 0 ||
+            !snapshot.Bind(owned_blob_.get(), owned_blob_size_) ||
+            !snapshot.LoadCharacter(codepoint) || !CopyGlyphLocked(&snapshot, &decoded)) {
+            return false;
+        }
     }
     candidates_[candidate_count_] = codepoint;
     candidate_count_ += 1;
@@ -569,10 +653,100 @@ bool StrokeOrderController::FilterCandidateLocked(uint32_t codepoint) {
 
 bool StrokeOrderController::LoadSelectedLocked(uint32_t codepoint) {
     selected_codepoint_ = codepoint;
-    if (!store_.Contains(codepoint) || !store_.LoadCharacter(codepoint)) {
+    std::vector<DecodedStroke> decoded;
+    if (catalog_.is_bound()) {
+        if (!LoadCatalogGlyphLocked(codepoint, &decoded)) {
+            return false;
+        }
+    } else {
+        if (!store_.Contains(codepoint) || !store_.LoadCharacter(codepoint) ||
+            !CopyGlyphLocked(&store_, &decoded)) {
+            return false;
+        }
+    }
+    loaded_glyph_ = std::move(decoded);
+    loaded_codepoint_ = codepoint;
+#if defined(ESP_PLATFORM)
+    size_t decoded_bytes = 0;
+    for (const auto& stroke : loaded_glyph_) {
+        decoded_bytes += stroke.outline.size() * sizeof(DecodedPoint);
+        decoded_bytes += stroke.median.size() * sizeof(DecodedPoint);
+    }
+    ESP_LOGI(TAG, "glyph U+%04X decoded=%u bytes strokes=%u retained_shard_bytes=0",
+             static_cast<unsigned>(codepoint), static_cast<unsigned>(decoded_bytes),
+             static_cast<unsigned>(loaded_glyph_.size()));
+#endif
+    return !loaded_glyph_.empty();
+}
+
+bool StrokeOrderController::LoadCatalogGlyphLocked(uint32_t codepoint,
+                                                   std::vector<DecodedStroke>* out) const {
+    if (out == nullptr || shard_source_ == nullptr || !catalog_.is_bound()) {
         return false;
     }
-    return store_.has_character() && store_.stroke_count() > 0;
+    StrokeOrderCatalog::Entry entry;
+    StrokeOrderCatalog::Shard shard;
+    if (!catalog_.Find(codepoint, &entry) || !catalog_.GetShard(entry.shard, &shard)) {
+        return false;
+    }
+    ScopedShardView view(shard_source_, shard.name);
+    if (!view.valid() || view.size() != shard.size) {
+        return false;
+    }
+    StrokeOrderStore transient;
+    uint32_t actual = 0;
+    return transient.Bind(view.data(), view.size()) &&
+           transient.character_count() == shard.character_count &&
+           transient.GetCodepointAt(entry.local_index, &actual) && actual == codepoint &&
+           transient.LoadCharacter(codepoint) && CopyGlyphLocked(&transient, out);
+}
+
+bool StrokeOrderController::ValidateCatalogShardsLocked() const {
+    if (!catalog_.is_bound() || shard_source_ == nullptr) {
+        return false;
+    }
+    for (uint16_t shard_index = 0; shard_index < catalog_.shard_count(); ++shard_index) {
+        StrokeOrderCatalog::Shard shard;
+        if (!catalog_.GetShard(shard_index, &shard)) {
+            return false;
+        }
+        ScopedShardView view(shard_source_, shard.name);
+        if (!view.valid() || view.size() != shard.size ||
+            StrokeOrderCatalog::CalculateCrc32(view.data(), view.size()) != shard.crc32) {
+            return false;
+        }
+        StrokeOrderStore transient;
+        if (!transient.Bind(view.data(), view.size()) ||
+            transient.character_count() != shard.character_count) {
+            return false;
+        }
+        for (uint32_t local = 0; local < transient.character_count(); ++local) {
+            uint32_t codepoint = 0;
+            StrokeOrderCatalog::Entry entry;
+            if (!transient.GetCodepointAt(local, &codepoint) || !catalog_.Find(codepoint, &entry) ||
+                entry.shard != shard_index || entry.local_index != local ||
+                !transient.LoadCharacter(codepoint) || transient.stroke_count() == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void StrokeOrderController::ClearDataLocked() {
+    CancelPlaybackLocked();
+    store_.Unbind();
+    catalog_.Unbind();
+    shard_source_ = nullptr;
+    owned_blob_.reset();
+    owned_blob_size_ = 0;
+    catalog_blob_.reset();
+    catalog_blob_size_ = 0;
+    loaded_glyph_.clear();
+    loaded_codepoint_ = 0;
+    candidate_count_ = 0;
+    selected_codepoint_ = 0;
+    state_ = StrokeOrderUiState::Hidden;
 }
 
 void StrokeOrderController::ResetPlaybackLocked() {
@@ -598,20 +772,14 @@ uint32_t StrokeOrderController::StrokeDurationLocked(uint16_t index) const {
 }
 
 uint32_t StrokeOrderController::MedianLengthLocked(uint16_t index) const {
-    StrokeOrderStore::StrokeView stroke;
-    if (!store_.GetStroke(index, &stroke) || stroke.median_count() < 2) {
+    if (index >= loaded_glyph_.size() || loaded_glyph_[index].median.size() < 2) {
         return kMinStrokeMs;
     }
     uint32_t length = 0;
-    StrokeOrderStore::Point previous;
-    if (!stroke.GetMedianPoint(0, &previous)) {
-        return kMinStrokeMs;
-    }
-    for (uint16_t i = 1; i < stroke.median_count(); ++i) {
-        StrokeOrderStore::Point point;
-        if (!stroke.GetMedianPoint(i, &point)) {
-            continue;
-        }
+    const auto& median = loaded_glyph_[index].median;
+    StrokeOrderStore::Point previous{median[0].x, median[0].y};
+    for (size_t i = 1; i < median.size(); ++i) {
+        const StrokeOrderStore::Point point{median[i].x, median[i].y};
         length += ApproxLength(previous, point);
         previous = point;
     }

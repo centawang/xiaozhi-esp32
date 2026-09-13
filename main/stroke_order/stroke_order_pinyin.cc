@@ -317,7 +317,7 @@ bool StrokeOrderPinyinIndex::BindView(const uint8_t* data, size_t size) {
 
     // Validate both sides of the character <-> group relation without dynamic
     // allocation. Counts are capped above, so these scans are deterministic and
-    // bounded by 1024 * 8 * 32 plus 1024 * 32 * log2(1024).
+    // bounded by 2048 * 8 * 32 plus 2048 * 32 * log2(2048).
     for (uint32_t i = 0; i < char_count; ++i) {
         uint32_t char_entry_delta = 0;
         uint32_t char_entry = 0;

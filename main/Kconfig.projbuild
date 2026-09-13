@@ -1127,13 +1127,13 @@ menu "Stroke Order"
         default n
         depends on BOARD_TYPE_M5STACK_CORE_S3 && !USE_EMOTE_MESSAGE_STYLE
         help
-            Compile the bounded SOB1/SPY1 parsers, CoreS3 笔划 overlay, and
-            package the reviewed 500-character prototype into default assets
-            extra-files without network access. The clickable entry appears only
-            when SOB1 binds and LVGL pointer input exists. Missing SPY1 keeps
-            exact-only/fallback candidates. This is not a release 字库, not
-            official certification, does not parse SVG on device, and does not
-            implement type=stroke.
+            Compile the bounded SCB1/SOB1/SPY1 parsers, CoreS3 笔划 overlay,
+            and package the reviewed 2000-character, eight-shard prototype into
+            default assets without network access. The clickable entry appears
+            only when the catalog, every shard, the matching SPY1 index, and LVGL
+            pointer input all validate. Any incomplete asset set fails closed.
+            This is not a release 字库, not official certification, does not parse
+            SVG on device, and does not implement type=stroke.
 endmenu
 
 endmenu

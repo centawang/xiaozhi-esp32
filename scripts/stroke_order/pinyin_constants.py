@@ -12,8 +12,11 @@ GROUP_INDEX_ENTRY_SIZE = 8
 READING_SIZE = 2
 MEMBER_SIZE = 8
 
-MAX_CHARACTERS = 1024
-MAX_GROUPS = 1024
+# SPY1 was not externally released. The 2000-character prototype keeps the v1
+# byte layout and raises only validator bounds after measuring the corpus:
+# 2000 characters, 1047 groups, max group 29, 63,618 bytes.
+MAX_CHARACTERS = 2048
+MAX_GROUPS = 2048
 MAX_READINGS_PER_CHARACTER = 8
 MAX_GROUP_MEMBERS = 32
 MAX_FILE_BYTES = 64 * 1024
