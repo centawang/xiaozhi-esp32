@@ -1124,7 +1124,7 @@ void StrokeOrderView::RedrawCanvas() {
     const auto state = controller_->state();
     const lv_color_t reference = MixLight(theme->text_color(), theme->background_color());
     const lv_color_t done = theme->text_color();
-    const lv_color_t accent = theme->user_bubble_color();
+    const lv_color_t start_cue = lv_color_hex(0xFF0000);
     for (uint16_t i = 0; i < strokes; ++i) {
         DrawStrokeOutline(&layer, current_glyph_.strokes[i], 0, 0, tw, reference, kOutlineWidth);
     }
@@ -1144,7 +1144,7 @@ void StrokeOrderView::RedrawCanvas() {
         current < strokes && !controller_->in_gap()) {
         // The cue is the only active-stroke drawing; the full contour snaps
         // into the completed pass after its hold. Never draw a partial median.
-        DrawStartMarker(&layer, current_glyph_.strokes[current], 0, 0, tw, accent);
+        DrawStartMarker(&layer, current_glyph_.strokes[current], 0, 0, tw, start_cue);
     }
     lv_canvas_finish_layer(canvas_, &layer);
 }

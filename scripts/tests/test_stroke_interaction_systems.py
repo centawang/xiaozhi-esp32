@@ -121,6 +121,8 @@ class StrokeInteractionTest(unittest.TestCase):
         marker = view[view.index("void StrokeOrderView::DrawStartMarker"):
                       view.index("void StrokeOrderView::RedrawCanvas")]
         self.assertIn("stroke.median[0]", marker)
+        self.assertIn("dsc.bg_color = color", marker)
+        self.assertIn("dsc.bg_opa = LV_OPA_COVER", marker)
         self.assertNotIn("for (", marker)
         self.assertNotIn("DrawPolyline", marker)
         self.assertNotIn("DrawLine", marker)
@@ -131,7 +133,12 @@ class StrokeInteractionTest(unittest.TestCase):
             self.assertNotIn(call, active)
         self.assertIn("reference = MixLight(theme->text_color(), theme->background_color())", draw)
         self.assertIn("done = theme->text_color()", draw)
-        self.assertIn("accent = theme->user_bubble_color()", draw)
+        self.assertIn("const lv_color_t start_cue = lv_color_hex(0xFF0000);", draw)
+        self.assertIn(
+            "DrawStartMarker(&layer, current_glyph_.strokes[current], 0, 0, tw, start_cue);",
+            active,
+        )
+        self.assertNotIn("theme->user_bubble_color()", draw)
 
     def test_lvgl_admits_before_disarm_render_or_abort(self):
         view = (ROOT / "main/stroke_order/stroke_order_view.cc").read_text()
