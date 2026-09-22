@@ -1,11 +1,12 @@
-#include "wifi_board.h"
+#include "application.h"
+#include "assets/lang_config.h"
+#include "axp2101.h"
+#include "config.h"
 #include "cores3_audio_codec.h"
 #include "display/lcd_display.h"
-#include "application.h"
-#include "config.h"
-#include "power_save_timer.h"
 #include "i2c_device.h"
-#include "axp2101.h"
+#include "power_save_timer.h"
+#include "wifi_board.h"
 
 #include <driver/i2c_master.h>
 #include <esp_lcd_ili9341.h>
@@ -17,6 +18,7 @@
 #include <lvgl.h>
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include "esp_video.h"
 #include "stroke_order/stroke_order_touch_input.h"
 
@@ -25,6 +27,82 @@
 #endif
 
 #define TAG "M5StackCoreS3Board"
+
+// CoreS3 uses the chat background as a listening/speaking indicator, not a transcript.
+class CoreS3ChatDisplay : public SpiLcdDisplay {
+public:
+    using SpiLcdDisplay::SpiLcdDisplay;
+
+    void SetupUI() override {
+        LcdDisplay::SetupUI();
+        DisplayLockGuard lock(this);
+        ApplyChatColorsLocked();
+    }
+
+    void SetChatMessage(const char* role, const char* content) override {
+        // Filter before the base implementation can create a subtitle or WeChat bubble.
+        // Do not clear here: a system activation/warning message must remain visible.
+        if (role == nullptr || std::strcmp(role, "user") == 0 ||
+            std::strcmp(role, "assistant") == 0) {
+            return;
+        }
+        LcdDisplay::SetChatMessage(role, content != nullptr ? content : "");
+    }
+
+protected:
+    void SetStatusLocked(const char* status) override {
+        // The public LvglDisplay entry point owns one lock for text, notification,
+        // timestamp and colors, so concurrent status changes cannot mix those states.
+        LvglDisplay::SetStatusLocked(status != nullptr ? status : "");
+        if (status != nullptr && std::strcmp(status, Lang::Strings::LISTENING) == 0) {
+            chat_background_ = 0x00FF00;
+        } else if (status != nullptr && std::strcmp(status, Lang::Strings::SPEAKING) == 0) {
+            chat_background_ = 0xFF0000;
+        } else {
+            chat_background_ = 0xFFFFFF;
+        }
+        ApplyChatColorsLocked();
+    }
+
+    void SetThemeLocked(Theme* theme) override {
+        // SetTheme and SetTextFont both dispatch here with the display lock held.
+        LcdDisplay::SetThemeLocked(theme);
+        ApplyChatColorsLocked();
+    }
+
+private:
+    uint32_t chat_background_ = 0xFFFFFF;
+
+    void ApplyChatColorsLocked() {
+        if (display_ == nullptr || !setup_ui_called_) {
+            return;
+        }
+        // Only known chat surfaces, never the screen's children or shared theme:
+        // the full-screen stroke overlay keeps its own colors and text inheritance.
+        const auto background = lv_color_hex(chat_background_);
+        for (auto* obj : {lv_display_get_screen_active(display_), container_, top_bar_, content_,
+                          bottom_bar_}) {
+            if (obj != nullptr) {
+                lv_obj_set_style_bg_image_src(obj, nullptr, 0);
+                lv_obj_set_style_bg_color(obj, background, 0);
+                lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+            }
+        }
+        // The transparent status bar must not cover the top bar's network/battery icons.
+        // WeChat system bubbles retain their matching theme background/text pair.
+        for (auto* label : {network_label_, status_label_, notification_label_, mute_label_,
+                            battery_label_, emoji_label_}) {
+            if (label != nullptr) {
+                lv_obj_set_style_text_color(label, lv_color_black(), 0);
+            }
+        }
+#if !CONFIG_USE_WECHAT_MESSAGE_STYLE
+        if (chat_message_label_ != nullptr) {
+            lv_obj_set_style_text_color(chat_message_label_, lv_color_black(), 0);
+        }
+#endif
+    }
+};
 
 class Pmic : public Axp2101 {
 public:
@@ -50,7 +128,7 @@ public:
 
 class CustomBacklight : public Backlight {
 public:
-    CustomBacklight(Pmic *pmic) : pmic_(pmic) {}
+    CustomBacklight(Pmic* pmic) : pmic_(pmic) {}
 
     void SetBrightnessImpl(uint8_t brightness) override {
         pmic_->SetBrightness(target_brightness_);
@@ -58,7 +136,7 @@ public:
     }
 
 private:
-    Pmic *pmic_;
+    Pmic* pmic_;
 };
 
 class Aw9523 : public I2cDevice {
@@ -98,16 +176,14 @@ public:
         int x = -1;
         int y = -1;
     };
-    
+
     Ft6336(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : I2cDevice(i2c_bus, addr) {
         uint8_t chip_id = ReadReg(0xA3);
         ESP_LOGI(TAG, "Get chip ID: 0x%02X", chip_id);
         read_buffer_ = new uint8_t[6];
     }
 
-    ~Ft6336() {
-        delete[] read_buffer_;
-    }
+    ~Ft6336() { delete[] read_buffer_; }
 
     void UpdateTouchPoint() {
         ReadRegs(0x02, read_buffer_, 6);
@@ -116,9 +192,7 @@ public:
         tp_.y = ((read_buffer_[3] & 0x0F) << 8) | read_buffer_[4];
     }
 
-    inline const TouchPoint_t& GetTouchPoint() {
-        return tp_;
-    }
+    inline const TouchPoint_t& GetTouchPoint() { return tp_; }
 
 private:
     uint8_t* read_buffer_ = nullptr;
@@ -149,9 +223,7 @@ private:
             GetDisplay()->SetPowerSaveMode(false);
             GetBacklight()->RestoreBrightness();
         });
-        power_save_timer_->OnShutdownRequest([this]() {
-            pmic_->PowerOff();
-        });
+        power_save_timer_->OnShutdownRequest([this]() { pmic_->PowerOff(); });
         power_save_timer_->SetEnabled(true);
     }
 
@@ -165,9 +237,10 @@ private:
             .glitch_ignore_cnt = 7,
             .intr_priority = 0,
             .trans_queue_depth = 0,
-            .flags = {
-                .enable_internal_pullup = 1,
-            },
+            .flags =
+                {
+                    .enable_internal_pullup = 1,
+                },
         };
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
     }
@@ -354,7 +427,7 @@ private:
         panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR;
         panel_config.bits_per_pixel = 16;
         ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(panel_io, &panel_config, &panel));
-        
+
         esp_lcd_panel_reset(panel);
         aw9523_->ResetIli9342();
 
@@ -363,23 +436,25 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
-        display_ = new SpiLcdDisplay(panel_io, panel,
-                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+        display_ = new CoreS3ChatDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT,
+                                         DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X,
+                                         DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
     }
 
-     void InitializeCamera() {
+    void InitializeCamera() {
         static esp_cam_ctlr_dvp_pin_config_t dvp_pin_config = {
             .data_width = CAM_CTLR_DATA_WIDTH_8,
-            .data_io = {
-                [0] = CAMERA_PIN_D0,
-                [1] = CAMERA_PIN_D1,
-                [2] = CAMERA_PIN_D2,
-                [3] = CAMERA_PIN_D3,
-                [4] = CAMERA_PIN_D4,
-                [5] = CAMERA_PIN_D5,
-                [6] = CAMERA_PIN_D6,
-                [7] = CAMERA_PIN_D7,
-            },
+            .data_io =
+                {
+                    [0] = CAMERA_PIN_D0,
+                    [1] = CAMERA_PIN_D1,
+                    [2] = CAMERA_PIN_D2,
+                    [3] = CAMERA_PIN_D3,
+                    [4] = CAMERA_PIN_D4,
+                    [5] = CAMERA_PIN_D5,
+                    [6] = CAMERA_PIN_D6,
+                    [7] = CAMERA_PIN_D7,
+                },
             .vsync_io = CAMERA_PIN_VSYNC,
             .de_io = CAMERA_PIN_HREF,
             .pclk_io = CAMERA_PIN_PCLK,
@@ -422,29 +497,18 @@ public:
     }
 
     virtual AudioCodec* GetAudioCodec() override {
-        static CoreS3AudioCodec audio_codec(i2c_bus_,
-            AUDIO_INPUT_SAMPLE_RATE,
-            AUDIO_OUTPUT_SAMPLE_RATE,
-            AUDIO_I2S_GPIO_MCLK,
-            AUDIO_I2S_GPIO_BCLK,
-            AUDIO_I2S_GPIO_WS,
-            AUDIO_I2S_GPIO_DOUT,
-            AUDIO_I2S_GPIO_DIN,
-            AUDIO_CODEC_AW88298_ADDR,
-            AUDIO_CODEC_ES7210_ADDR,
-            AUDIO_INPUT_REFERENCE);
+        static CoreS3AudioCodec audio_codec(
+            i2c_bus_, AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE, AUDIO_I2S_GPIO_MCLK,
+            AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS, AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN,
+            AUDIO_CODEC_AW88298_ADDR, AUDIO_CODEC_ES7210_ADDR, AUDIO_INPUT_REFERENCE);
         return &audio_codec;
     }
 
-    virtual Display* GetDisplay() override {
-        return display_;
-    }
+    virtual Display* GetDisplay() override { return display_; }
 
-    virtual Camera* GetCamera() override {
-        return camera_;
-    }
+    virtual Camera* GetCamera() override { return camera_; }
 
-    virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging) override {
+    virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
         static bool last_discharging = false;
         charging = pmic_->IsCharging();
         discharging = pmic_->IsDischarging();
@@ -464,7 +528,7 @@ public:
         WifiBoard::SetPowerSaveLevel(level);
     }
 
-    virtual Backlight *GetBacklight() override {
+    virtual Backlight* GetBacklight() override {
         static CustomBacklight backlight(pmic_);
         return &backlight;
     }

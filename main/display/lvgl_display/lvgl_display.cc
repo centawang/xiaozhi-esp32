@@ -71,7 +71,7 @@ bool LvglDisplay::SetTextFont(std::shared_ptr<LvglFont> text_font) {
         dark_theme->set_text_font(text_font);
     }
     if (current_theme_ != nullptr) {
-        SetTheme(current_theme_);
+        SetThemeLocked(current_theme_);
     }
     previous_light_font.reset();
     previous_dark_font.reset();
@@ -143,11 +143,22 @@ LvglDisplay::~LvglDisplay() {
     }
 }
 
+void LvglDisplay::SetTheme(Theme* theme) {
+    DisplayLockGuard lock(this);
+    SetThemeLocked(theme);
+}
+
+void LvglDisplay::SetThemeLocked(Theme* theme) { Display::SetTheme(theme); }
+
 void LvglDisplay::SetStatus(const char* status) {
+    DisplayLockGuard lock(this);
+    SetStatusLocked(status);
+}
+
+void LvglDisplay::SetStatusLocked(const char* status) {
     if (!setup_ui_called_) {
         ESP_LOGW(TAG, "SetStatus('%s') called before SetupUI() - message will be lost!", status);
     }
-    DisplayLockGuard lock(this);
     if (status_label_ == nullptr) {
         if (setup_ui_called_) {
             ESP_LOGW(TAG,

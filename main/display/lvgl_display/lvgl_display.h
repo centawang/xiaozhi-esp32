@@ -21,7 +21,8 @@ public:
     LvglDisplay();
     virtual ~LvglDisplay();
 
-    virtual void SetStatus(const char* status);
+    virtual void SetStatus(const char* status) override;
+    virtual void SetTheme(Theme* theme) override;
     virtual void ShowNotification(const char* notification, int duration_ms = 3000);
     virtual void ShowNotification(const std::string& notification, int duration_ms = 3000);
     virtual void SetPreviewImage(std::unique_ptr<LvglImage> image);
@@ -33,6 +34,11 @@ public:
     bool SetTextFont(std::shared_ptr<LvglFont> text_font);
 
 protected:
+    // Called with the display lock held by SetStatus/SetTheme/SetTextFont. Overrides may
+    // call the base *Locked implementation, but must not re-enter a locking public method.
+    virtual void SetStatusLocked(const char* status);
+    virtual void SetThemeLocked(Theme* theme);
+
     esp_pm_lock_handle_t pm_lock_ = nullptr;
     lv_display_t* display_ = nullptr;
 

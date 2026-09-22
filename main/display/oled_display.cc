@@ -412,9 +412,7 @@ void OledDisplay::SetEmotion(const char* emotion) {
     }
 }
 
-void OledDisplay::SetTheme(Theme* theme) {
-    DisplayLockGuard lock(this);
-
+void OledDisplay::SetThemeLocked(Theme* theme) {
     auto lvgl_theme = static_cast<LvglTheme*>(theme);
     auto text_font = lvgl_theme->text_font()->font();
 

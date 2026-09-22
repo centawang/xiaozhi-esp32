@@ -34,6 +34,7 @@ protected:
     bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
 
     void InitializeLcdThemes();
+    void SetThemeLocked(Theme* theme) override;
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
@@ -49,8 +50,6 @@ public:
     virtual void ClearChatMessages() override;
     virtual void SetPreviewImage(std::unique_ptr<LvglImage> image) override;
     virtual void SetupUI() override;
-    // Add theme switching function
-    virtual void SetTheme(Theme* theme) override;
 
     // Set whether to hide chat messages/subtitles
     void SetHideSubtitle(bool hide);

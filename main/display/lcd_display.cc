@@ -1191,9 +1191,7 @@ void LcdDisplay::SetEmotion(const char* emotion) {
 #endif
 }
 
-void LcdDisplay::SetTheme(Theme* theme) {
-    DisplayLockGuard lock(this);
-
+void LcdDisplay::SetThemeLocked(Theme* theme) {
     auto lvgl_theme = static_cast<LvglTheme*>(theme);
 
     // Get the active screen
