@@ -18,5 +18,14 @@ main/mmap_generate_emoji.h
 *.bin
 # Required SCB1 catalog for the checked-in, eight-shard CoreS3 prototype.
 !scripts/tests/fixtures/stroke_order/prototype_2000/stroke_cat.bin
+# Exact binary members of the host-only 3500 audit fixture (not device assets).
+!scripts/tests/fixtures/stroke_order/prototype_3500/so00.bin
+!scripts/tests/fixtures/stroke_order/prototype_3500/so01.bin
+!scripts/tests/fixtures/stroke_order/prototype_3500/so02.bin
+!scripts/tests/fixtures/stroke_order/prototype_3500/so03.bin
+!scripts/tests/fixtures/stroke_order/prototype_3500/so04.bin
+!scripts/tests/fixtures/stroke_order/prototype_3500/so05.bin
+!scripts/tests/fixtures/stroke_order/prototype_3500/stroke_cat.bin
+!scripts/tests/fixtures/stroke_order/prototype_3500/stroke_pinyin.bin
 mmap_generate_*.h
 .clangd

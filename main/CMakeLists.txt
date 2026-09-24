@@ -1042,6 +1042,8 @@ endif()
 if(CONFIG_STROKE_ORDER_LOCAL)
     list(APPEND SOURCES
         "stroke_order/stroke_order_store.cc"
+        "stroke_order/stroke_order_v2.cc"
+        "stroke_order/stroke_order_source_adapter.cc"
         "stroke_order/stroke_order_catalog.cc"
         "stroke_order/stroke_order_assets.cc"
         "stroke_order/stroke_order_controller.cc"
@@ -1049,68 +1051,121 @@ if(CONFIG_STROKE_ORDER_LOCAL)
         "stroke_order/stroke_round_coordinator.cc"
         "stroke_order/stroke_order_view.cc"
     )
-    set(STROKE_ORDER_ASSETS_DIR "${CMAKE_BINARY_DIR}/stroke_order_assets")
-    set(STROKE_ORDER_PROTOTYPE_DIR "${PROJECT_DIR}/scripts/tests/fixtures/stroke_order/prototype_2000")
-    set(STROKE_ORDER_ASSET_OUTPUTS
-        "${STROKE_ORDER_ASSETS_DIR}/so00.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/so01.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/so02.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/so03.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/so04.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/so05.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/so06.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/so07.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/stroke_cat.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/stroke_pinyin.bin"
-        "${STROKE_ORDER_ASSETS_DIR}/runtime.json"
-        "${STROKE_ORDER_ASSETS_DIR}/ARPHICPL.TXT"
-        "${STROKE_ORDER_ASSETS_DIR}/UNICODE-LICENSE.txt"
-        "${STROKE_ORDER_ASSETS_DIR}/NOTICE.md"
-        "${STROKE_ORDER_ASSETS_DIR}/SHA256SUMS"
-    )
-    set(STROKE_ORDER_SOURCE_DEPENDENCIES
-        "${STROKE_ORDER_PROTOTYPE_DIR}/SHA256SUMS"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_cat.bin"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.spy1"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/runtime.json"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.cov.json"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.src.json"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.cov.json"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.manifest.json"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/selection-2000.csv"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/charset-2000.txt"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/ARPHICPL.TXT"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/UNICODE-LICENSE.txt"
-        "${STROKE_ORDER_PROTOTYPE_DIR}/NOTICE.md"
-    )
-    foreach(STROKE_SHARD_SUFFIX 00 01 02 03 04 05 06 07)
-        list(APPEND STROKE_ORDER_SOURCE_DEPENDENCIES
-            "${STROKE_ORDER_PROTOTYPE_DIR}/so${STROKE_SHARD_SUFFIX}.sob1"
-            "${STROKE_ORDER_PROTOTYPE_DIR}/so${STROKE_SHARD_SUFFIX}.manifest.json"
+    if(CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500)
+        list(APPEND SOURCES "stroke_order/stroke_order_worker.cc")
+        # Separate staging roots prevent stale 8-shard/v1 files on profile switches.
+        set(STROKE_ORDER_ASSETS_DIR "${CMAKE_BINARY_DIR}/stroke_order_assets/level1_3500")
+        set(STROKE_ORDER_PROTOTYPE_DIR "${PROJECT_DIR}/scripts/tests/fixtures/stroke_order/prototype_3500")
+        set(STROKE_ORDER_ASSET_OUTPUTS "${STROKE_ORDER_ASSETS_DIR}/stroke_cat.bin"
+                                     "${STROKE_ORDER_ASSETS_DIR}/stroke_pinyin.bin")
+        foreach(STROKE_SHARD_SUFFIX 00 01 02 03 04 05)
+            list(APPEND STROKE_ORDER_ASSET_OUTPUTS "${STROKE_ORDER_ASSETS_DIR}/so${STROKE_SHARD_SUFFIX}.bin")
+        endforeach()
+        # Pin native host compilers, never use the ESP cross compiler or bare PATH
+        # at admission execution time. Resolve toolchain symlinks at configure.
+        find_program(STROKE_ORDER_HOST_CC NAMES cc clang gcc REQUIRED NO_CMAKE_FIND_ROOT_PATH)
+        find_program(STROKE_ORDER_HOST_CXX NAMES c++ clang++ g++ REQUIRED NO_CMAKE_FIND_ROOT_PATH)
+        get_filename_component(STROKE_ORDER_HOST_CC "${STROKE_ORDER_HOST_CC}" REALPATH)
+        get_filename_component(STROKE_ORDER_HOST_CXX "${STROKE_ORDER_HOST_CXX}" REALPATH)
+        # Admission report is a host byproduct, NEVER part of device assets.
+        set(STROKE_ORDER_ADMISSION "${CMAKE_BINARY_DIR}/stroke3500-admission.json")
+        file(GLOB STROKE_ORDER_SOURCE_DEPENDENCIES CONFIGURE_DEPENDS
+            "${STROKE_ORDER_PROTOTYPE_DIR}/*"
+            "${PROJECT_DIR}/scripts/stroke_order/*.py"
+            "${PROJECT_DIR}/main/stroke_order/*.h"
+            "${PROJECT_DIR}/managed_components/laride__heatshrink/include/*.h"
+            "${PROJECT_DIR}/scripts/tests/fixtures/stroke_order/prototype_2000/*.sob1"
         )
-    endforeach()
-    add_custom_command(
-        OUTPUT ${STROKE_ORDER_ASSET_OUTPUTS}
-        COMMAND python "${PROJECT_DIR}/scripts/package_stroke_order_2000.py"
-                --source-dir "${STROKE_ORDER_PROTOTYPE_DIR}"
-                --output-dir "${STROKE_ORDER_ASSETS_DIR}"
-        DEPENDS
-            "${PROJECT_DIR}/scripts/package_stroke_order_2000.py"
-            "${PROJECT_DIR}/scripts/stroke_order/__init__.py"
-            "${PROJECT_DIR}/scripts/stroke_order/catalog.py"
-            "${PROJECT_DIR}/scripts/stroke_order/constants.py"
-            "${PROJECT_DIR}/scripts/stroke_order/pinyin.py"
-            "${PROJECT_DIR}/scripts/stroke_order/pinyin_constants.py"
-            "${PROJECT_DIR}/scripts/stroke_order/select.py"
-            "${PROJECT_DIR}/scripts/stroke_order/unpack.py"
-            ${STROKE_ORDER_SOURCE_DEPENDENCIES}
-        COMMENT "Packaging reviewed sharded 2000-character stroke-order prototype"
-        VERBATIM
-    )
+        add_custom_command(
+            OUTPUT ${STROKE_ORDER_ASSET_OUTPUTS}
+            BYPRODUCTS "${STROKE_ORDER_ADMISSION}"
+            COMMAND python "${PROJECT_DIR}/scripts/verify_stroke_order_3500.py"
+                    --source "${STROKE_ORDER_PROTOTYPE_DIR}"
+                    --output-dir "${STROKE_ORDER_ASSETS_DIR}"
+                    --report "${STROKE_ORDER_ADMISSION}"
+                    --cc "${STROKE_ORDER_HOST_CC}" --cxx "${STROKE_ORDER_HOST_CXX}"
+            DEPENDS
+                "${STROKE_ORDER_HOST_CC}" "${STROKE_ORDER_HOST_CXX}"
+                "${PROJECT_DIR}/scripts/verify_stroke_order_3500.py"
+                "${PROJECT_DIR}/scripts/package_stroke_order_3500.py"
+                "${PROJECT_DIR}/scripts/stroke_order/device_verify.cc"
+                "${PROJECT_DIR}/main/stroke_order/stroke_order_v2.cc"
+                "${PROJECT_DIR}/main/stroke_order/stroke_order_store.cc"
+                "${PROJECT_DIR}/managed_components/laride__heatshrink/heatshrink_decoder.c"
+                "${PROJECT_DIR}/managed_components/laride__heatshrink/heatshrink_encoder.c"
+                ${STROKE_ORDER_SOURCE_DEPENDENCIES}
+            COMMENT "Admitting 3500/6 prototype through source policy and production W4a reader"
+            VERBATIM
+        )
+    elseif(CONFIG_STROKE_ORDER_DATASET_LEGACY2000)
+        set(STROKE_ORDER_ASSETS_DIR "${CMAKE_BINARY_DIR}/stroke_order_assets/legacy2000")
+        set(STROKE_ORDER_PROTOTYPE_DIR "${PROJECT_DIR}/scripts/tests/fixtures/stroke_order/prototype_2000")
+        set(STROKE_ORDER_ASSET_OUTPUTS
+            "${STROKE_ORDER_ASSETS_DIR}/so00.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/so01.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/so02.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/so03.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/so04.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/so05.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/so06.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/so07.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/stroke_cat.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/stroke_pinyin.bin"
+            "${STROKE_ORDER_ASSETS_DIR}/runtime.json"
+            "${STROKE_ORDER_ASSETS_DIR}/ARPHICPL.TXT"
+            "${STROKE_ORDER_ASSETS_DIR}/UNICODE-LICENSE.txt"
+            "${STROKE_ORDER_ASSETS_DIR}/NOTICE.md"
+            "${STROKE_ORDER_ASSETS_DIR}/SHA256SUMS"
+        )
+        set(STROKE_ORDER_SOURCE_DEPENDENCIES
+            "${STROKE_ORDER_PROTOTYPE_DIR}/SHA256SUMS"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_cat.bin"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.spy1"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/runtime.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.cov.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_order.src.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.cov.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/stroke_pinyin.manifest.json"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/selection-2000.csv"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/charset-2000.txt"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/ARPHICPL.TXT"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/UNICODE-LICENSE.txt"
+            "${STROKE_ORDER_PROTOTYPE_DIR}/NOTICE.md"
+        )
+        foreach(STROKE_SHARD_SUFFIX 00 01 02 03 04 05 06 07)
+            list(APPEND STROKE_ORDER_SOURCE_DEPENDENCIES
+                "${STROKE_ORDER_PROTOTYPE_DIR}/so${STROKE_SHARD_SUFFIX}.sob1"
+                "${STROKE_ORDER_PROTOTYPE_DIR}/so${STROKE_SHARD_SUFFIX}.manifest.json"
+            )
+        endforeach()
+        add_custom_command(
+            OUTPUT ${STROKE_ORDER_ASSET_OUTPUTS}
+            COMMAND python "${PROJECT_DIR}/scripts/package_stroke_order_2000.py"
+                    --source-dir "${STROKE_ORDER_PROTOTYPE_DIR}"
+                    --output-dir "${STROKE_ORDER_ASSETS_DIR}"
+            DEPENDS
+                "${PROJECT_DIR}/scripts/package_stroke_order_2000.py"
+                "${PROJECT_DIR}/scripts/stroke_order/__init__.py"
+                "${PROJECT_DIR}/scripts/stroke_order/catalog.py"
+                "${PROJECT_DIR}/scripts/stroke_order/constants.py"
+                "${PROJECT_DIR}/scripts/stroke_order/pinyin.py"
+                "${PROJECT_DIR}/scripts/stroke_order/pinyin_constants.py"
+                "${PROJECT_DIR}/scripts/stroke_order/select.py"
+                "${PROJECT_DIR}/scripts/stroke_order/unpack.py"
+                ${STROKE_ORDER_SOURCE_DEPENDENCIES}
+            COMMENT "Packaging reviewed sharded 2000-character stroke-order prototype"
+            VERBATIM
+        )
+    else()
+        message(FATAL_ERROR "Local stroke-order requires exactly one dataset")
+    endif()
     set(DEFAULT_ASSETS_EXTRA_FILES "${STROKE_ORDER_ASSETS_DIR}")
     set(DEFAULT_ASSETS_EXTRA_FILES_DEPENDENCIES ${STROKE_ORDER_ASSET_OUTPUTS})
 endif()
 
+# IDF discovers dependencies before Kconfig is available: the direct heatshrink
+# edge below must be unconditional even though stroke-order sources are optional.
+# The main manifest also pins this direct dependency to version 0.4.1.
 set(MAIN_PRIV_REQUIRES_EXTRA "")
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
@@ -1161,6 +1216,7 @@ idf_component_register(SRCS ${SOURCES}
                         bt
                         fatfs
                         xiaozhi-fonts
+                        laride__heatshrink
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 

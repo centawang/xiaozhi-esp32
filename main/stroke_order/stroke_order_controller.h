@@ -4,6 +4,7 @@
 #include "stroke_order/stroke_order_candidates.h"
 #include "stroke_order/stroke_order_catalog.h"
 #include "stroke_order/stroke_order_layout.h"
+#include "stroke_order/stroke_order_source.h"
 #include "stroke_order/stroke_order_store.h"
 
 #include <cstddef>
@@ -66,8 +67,6 @@ public:
     static constexpr uint32_t kTimerPeriodMs = 33;
     static constexpr uint32_t kMaxAnimationAdvanceMs = 160;
     static constexpr uint32_t kMaxCandidateInputs = 24;
-    static constexpr uint32_t kRuntimeCharacterCount = 2000;
-    static constexpr uint16_t kRuntimeShardCount = 8;
     static constexpr size_t kMaxOwnedBlobBytes = StrokeOrderStore::kMaxFileBytes;
 
     static StrokeOrderController& GetInstance();
@@ -78,11 +77,17 @@ public:
 
     bool BindStore(const uint8_t* data, size_t size);
     bool BindCatalog(const uint8_t* data, size_t size, StrokeOrderShardSource* source);
+    // Opt-in prepared source path: no corpus validation/decompression here.
+    // Rebind after each successful source Commit; failed admission preserves old state.
+    bool BindSource(StrokeOrderSource* source);
     void Unbind();
     bool is_ready() const;
     bool MatchesPinyinIndex(const StrokeOrderPinyinIndex& pinyin_index) const;
 
     bool Contains(uint32_t codepoint) const;
+    // Prepared-source metadata only: no Acquire, glyph copy or decompression.
+    // primary==0 plans the first six official ranks for local fallback.
+    uint32_t PlanSourceCandidates(uint32_t primary, uint32_t* out, uint32_t capacity) const;
     bool SetCandidates(const uint32_t* codepoints, uint32_t count);
     bool SetCandidatesFromPrimary(uint32_t primary,
                                   const StrokeOrderCandidateProvider* provider = nullptr);
@@ -132,6 +137,10 @@ private:
     bool ContainsLocked(uint32_t codepoint) const;
     bool FilterCandidateLocked(uint32_t codepoint);
     bool LoadSelectedLocked(uint32_t codepoint);
+    bool LoadSourceGlyphLocked(uint32_t codepoint, std::vector<DecodedStroke>* out) const;
+    static bool CopyStrokesLocked(const StrokeOrderStore::StrokeView* strokes, uint16_t count,
+                                  std::vector<DecodedStroke>* out);
+    static bool CopyStrokeLocked(const StrokeOrderStore::StrokeView& stroke, DecodedStroke* out);
     bool LoadCatalogGlyphLocked(uint32_t codepoint, std::vector<DecodedStroke>* out) const;
     bool ValidateCatalogShardsLocked() const;
     static bool CopyGlyphLocked(const StrokeOrderStore* store, std::vector<DecodedStroke>* out);
@@ -150,6 +159,8 @@ private:
     size_t catalog_blob_size_ = 0;
     StrokeOrderCatalog catalog_;
     StrokeOrderShardSource* shard_source_ = nullptr;
+    StrokeOrderSource* source_ = nullptr;
+    uint64_t source_generation_ = 0;
     std::vector<DecodedStroke> loaded_glyph_;
     uint32_t loaded_codepoint_ = 0;
     StrokeOrderUiState state_ = StrokeOrderUiState::Hidden;

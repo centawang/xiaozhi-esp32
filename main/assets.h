@@ -15,6 +15,11 @@
 #include <spi_flash_mmap.h>
 #endif
 
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+#include <mutex>
+class StrokeOrderBundleOwner;
+#endif
+
 struct Asset {
     size_t size;
     size_t offset;
@@ -40,6 +45,11 @@ public:
                   std::function<void(int progress, size_t speed)> progress_callback);
     bool Apply(bool refresh_display_theme = true);
     bool GetAssetData(const std::string& name, void*& ptr, size_t& size);
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    // Pins exactly catalog/pinyin/six shards until the final immutable owner dies.
+    std::shared_ptr<const StrokeOrderBundleOwner> LeaseStrokeBundle(uint64_t* generation);
+    uint64_t StrokeAssetsGeneration() const;
+#endif
 
     inline bool partition_valid() const { return partition_valid_; }
     inline std::string default_assets_url() const { return default_assets_url_; }
@@ -91,6 +101,13 @@ private:
         bool GetAssetData(Assets* assets, const std::string& name, void*& ptr,
                           size_t& size) override;
     };
+
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    mutable std::mutex stroke_mapping_mutex_;
+    std::shared_ptr<const uint64_t> stroke_mapping_pin_;
+    uint64_t stroke_mapping_generation_ = 0;
+    bool stroke_mapping_accepting_ = false;
+#endif
 
     // Strategy instance
     std::unique_ptr<AssetStrategy> strategy_;

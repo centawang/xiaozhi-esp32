@@ -1,0 +1,14 @@
+{
+  "apl_sha256": "5590533436c70f10f2f524ee61456238c290175c6662fbe1c700b5f038a6d328",
+  "hwd_commit": "68d10a4b21150cae5e1ebbd223eed289cf32d90c",
+  "hwd_repo": "https://github.com/chanind/hanzi-writer-data",
+  "hwd_tree": "e16c125aeaeffa1734f254e9d99c46fe77571588",
+  "official_pdf_sha256": "af85c706a53d3b3bbad818bcce7415ac9a2284ea14f79fe7f54ce1248a7bdac9",
+  "selection_sha256": "f32fa0c468ad9a1752da81ac973d289e59c378aab0b84eaad0475bde3fa4466f",
+  "source_manifest_sha256": "ab282a13d101a7e8de976107436c71031d69887b734884f21f99862d4045d9c5",
+  "table_commit": "f9786a82be6e1672bdc60f85760a9e4a3791d1f1",
+  "table_sha256": "a9f0a21fb83a84dd695eaeec7b77743a6099ca559768c8275ae0c22c827917d0",
+  "table_verification": "pinned archive SHA256; not a clean Git checkout claim",
+  "unicode_license_sha256": "e7a93b009565cfce55919a381437ac4db883e9da2126fa28b91d12732bc53d96",
+  "unihan_sha256": "b8f000df69de7828d21326a2ffea462b04bc7560022989f7cc704f10521ef3e0"
+}

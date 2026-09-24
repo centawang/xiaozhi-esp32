@@ -11,6 +11,11 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <new>
+#endif
 
 #if defined(HAVE_LVGL)
 #include <esp_lvgl_port.h>
@@ -92,11 +97,22 @@ void StyleControl(lv_obj_t* obj, LvglTheme* theme) {
 }  // namespace
 
 StrokeOrderView& StrokeOrderView::GetInstance() {
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    // Attach's receiver is evaluated before its Controller argument. Establish
+    // reverse static destruction order explicitly: View must unbind first.
+    (void)StrokeOrderController::GetInstance();
+#endif
     static StrokeOrderView instance;
     return instance;
 }
 
 StrokeOrderView::StrokeOrderView() = default;
+
+StrokeOrderView::~StrokeOrderView() {
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    Shutdown();
+#endif
+}
 
 bool StrokeOrderView::IsOverlayActive() const {
     return overlay_visible_.load(std::memory_order_acquire);
@@ -135,7 +151,15 @@ bool StrokeOrderView::Attach(Display* display, StrokeOrderController* controller
     lifecycle_.Initialize();
     lifecycle_.SetDeviceIdle(Application::GetInstance().GetDeviceState() == kDeviceStateIdle);
     lifecycle_.SetPointerReady(HasPointerIndev());
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    // Application attaches before CheckAssets/Apply. Do not construct Assets
+    // (and checksum its partition) or validate a corpus under this LVGL lock.
+    // Assets::Apply invokes RebindAssets after successful enclosing admission.
+    lifecycle_.SetAssetsReady(false);
+    return true;
+#else
     return RebindAssetsLocked();
+#endif
 #endif
 }
 
@@ -155,6 +179,13 @@ bool StrokeOrderView::RebindAssets() {
 }
 
 bool StrokeOrderView::SuspendAssets() {
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    // Close source admission/generation before waiting for any LVGL callback.
+    // Atomic owner snapshot is safe against concurrent Shutdown/task teardown.
+    auto suspending_worker = std::atomic_load(&prepare_worker_);
+    if (suspending_worker)
+        suspending_worker->Suspend();
+#endif
     const uint64_t generation = coordinator_ != nullptr ? coordinator_->CurrentGeneration() : 0;
     if (generation != 0) {
         Application::GetInstance().RequestAbortStrokeRound(generation,
@@ -174,10 +205,19 @@ bool StrokeOrderView::SuspendAssets() {
         ESP_LOGE(TAG, "cannot suspend stroke assets without the display lock");
         return false;
     }
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    CancelPrepareLocked(true);
+#endif
     lifecycle_.SuspendAssets();
     InvalidateVisualsLocked(true);
     SuspendStrokeOrderAssets(controller_, &pinyin_index_);
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    preparing_bundle_ = false;
+    prepare_result_ = {};
+    return !prepare_worker_ || prepare_worker_->Suspend();
+#else
     return true;
+#endif
 #endif
 }
 
@@ -277,6 +317,10 @@ void StrokeOrderView::Shutdown() {
         if (!lock) {
             return;
         }
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+        prepare_shutdown_ = true;
+        CancelPrepareLocked(true);
+#endif
         lifecycle_.Shutdown();
         InvalidateVisualsLocked(true);
         if (entry_ != nullptr && lv_obj_is_valid(entry_)) {
@@ -288,6 +332,18 @@ void StrokeOrderView::Shutdown() {
         if (controller_ != nullptr) {
             controller_->Shutdown();
         }
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+        if (prepare_timer_) {
+            lv_timer_delete(prepare_timer_);
+            prepare_timer_ = nullptr;
+        }
+        prepare_result_ = {};
+        if (prepare_worker_) {
+            auto worker =
+                std::atomic_exchange(&prepare_worker_, std::shared_ptr<StrokeOrderWorker>{});
+            worker->Stop();  // task owns its lifetime until drain, no View callback
+        }
+#endif
     } else if (controller_ != nullptr) {
         controller_->Shutdown();
     }
@@ -360,6 +416,18 @@ bool StrokeOrderView::StartLocalCandidateSessionFromMain(uint64_t generation) {
     if (!lock) {
         return false;
     }
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle ||
+        !coordinator_->IsCurrentGeneration(generation) || !controller_->is_ready() ||
+        !lifecycle_.CanShowEntry() || !lifecycle_.TryOpenOverlay() ||
+        !session_.BeginLocalCandidates(generation) ||
+        !coordinator_->MarkLocalCandidates(generation,
+                                           static_cast<uint64_t>(esp_timer_get_time() / 1000)))
+        return false;
+    presented_generation_ = generation;
+    lifecycle_.SetListenHold(false);
+    return PrepareCandidatesLocked(generation, 0);
+#else
     uint32_t local_candidates[StrokeOrderLayout::kMaxCandidates] = {0x4E00, 0x4EBA, 0x53E3};
     uint32_t local_count = 3;
     if (pinyin_index_.is_bound()) {
@@ -384,6 +452,7 @@ bool StrokeOrderView::StartLocalCandidateSessionFromMain(uint64_t generation) {
         return false;
     }
     return true;
+#endif
 #endif
 }
 
@@ -477,10 +546,25 @@ bool StrokeOrderView::HasPointerIndev() const {
 }
 
 bool StrokeOrderView::RebindAssetsLocked() {
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    CancelPrepareLocked(true);
+#endif
     lifecycle_.SuspendAssets();
     InvalidateVisualsLocked(true);
     SuspendStrokeOrderAssets(controller_, &pinyin_index_);
 
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    if (!StartPrepareWorkerLocked())
+        return false;
+    prepare_worker_->Suspend();
+    // Apply can replace Attach while its validation is still running. Retain
+    // one pinned latest input, then let the timer retry NONBLOCKING drain only.
+    pending_bundle_ = Assets::GetInstance().LeaseStrokeBundle(&assets_generation_);
+    bundle_drain_polls_ = 0;
+    preparing_bundle_ = pending_bundle_ != nullptr;
+    // Readiness is not published until the fenced timer consumes Commit+BindSource.
+    return preparing_bundle_;
+#else
     void* catalog_ptr = nullptr;
     size_t catalog_size = 0;
     void* pinyin_ptr = nullptr;
@@ -511,7 +595,188 @@ bool StrokeOrderView::RebindAssetsLocked() {
         ESP_LOGW(TAG, "no LVGL pointer indev; 笔划 entry hidden");
     }
     return bound && has_pointer;
+#endif
 }
+
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+bool StrokeOrderView::StartPrepareWorkerLocked() {
+    if (prepare_shutdown_)
+        return false;
+    if (prepare_worker_)
+        return prepare_timer_ != nullptr;
+    auto worker = std::shared_ptr<StrokeOrderWorker>(new (std::nothrow) StrokeOrderWorker);
+    if (!worker)
+        return false;
+    // The task owns ONLY the mailbox/source, never this View or an LVGL object.
+    // Stop is asynchronous; the final reference dies on the worker after drain.
+    auto* task_owner = new (std::nothrow) std::shared_ptr<StrokeOrderWorker>(worker);
+    if (!task_owner)
+        return false;
+    if (xTaskCreate(
+            [](void* arg) {
+                auto* owner = static_cast<std::shared_ptr<StrokeOrderWorker>*>(arg);
+                auto state = std::move(*owner);
+                delete owner;
+                while (!state->stopped()) {
+                    state->RunOne();
+                    // Fixed wait; no unbounded callback/event queue. Idle priority
+                    // allows watchdog/idle and audio to run during full validation.
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                }
+                state->Suspend();
+                state.reset();
+                vTaskDelete(nullptr);
+            },
+            "stroke_prepare", 16384, task_owner, tskIDLE_PRIORITY, nullptr) != pdPASS) {
+        delete task_owner;
+        return false;
+    }
+    std::atomic_store(&prepare_worker_, std::move(worker));
+    prepare_timer_ = lv_timer_create(PrepareTimerCb, 33, this);
+    if (!prepare_timer_) {
+        auto stopped = std::atomic_exchange(&prepare_worker_, std::shared_ptr<StrokeOrderWorker>{});
+        stopped->Stop();
+        return false;
+    }
+    return true;
+}
+
+void StrokeOrderView::CancelPrepareLocked(bool cancel_bundle) {
+    // Corpus readiness belongs to the asset generation, not a UI/voice round.
+    // Power-save/visual cancellation must not strand an in-flight initial bind.
+    if (preparing_bundle_ && !cancel_bundle)
+        return;
+    pending_bundle_.reset();
+    prepare_result_ = {};
+    if (!prepare_worker_)
+        return;
+    if (preparing_bundle_) {
+        ESP_LOGI(TAG, "bundle stage=cancel ok=0 reason=explicit_asset_or_shutdown_cancel");
+        controller_->Unbind();
+        prepare_worker_->Suspend();
+        preparing_bundle_ = false;
+    } else {
+        prepare_worker_->CancelRound();
+    }
+}
+
+bool StrokeOrderView::PrepareCandidatesLocked(uint64_t generation, uint32_t primary) {
+    uint32_t cps[6] = {};
+    const uint32_t count = controller_->PlanSourceCandidates(primary, cps, 6);
+    prepare_result_ = {};
+    if (!count) {
+        session_.MarkNoMatch();
+        coordinator_->MarkNoMatch(generation);
+        return controller_->EnterNoMatch() && EnsureOverlay() && RenderNoMatch();
+    }
+    if (coordinator_->CurrentPhase() == StrokeRoundCoordinator::Phase::ProcessingStt) {
+        // Start the existing 60s timeout only once a metadata plan exists.
+        if (!coordinator_->MarkCandidates(generation,
+                                          static_cast<uint64_t>(esp_timer_get_time() / 1000)))
+            return false;
+        session_.MarkCandidates();
+    }
+    if (!prepare_worker_ || !controller_->EnterConnecting() || !EnsureOverlay() ||
+        !RenderStatusPage("Loading", false) ||
+        !prepare_worker_->SubmitGlyphs(assets_generation_, generation, cps, count)) {
+        CancelSessionLocked(false);
+        return false;
+    }
+    return true;
+}
+
+void StrokeOrderView::PrepareTimerCb(lv_timer_t* timer) {
+    auto* self = static_cast<StrokeOrderView*>(lv_timer_get_user_data(timer));
+    if (!self || self->prepare_timer_ != timer || !self->prepare_worker_)
+        return;
+    if (self->pending_bundle_) {
+        if (self->assets_generation_ != Assets::GetInstance().StrokeAssetsGeneration() ||
+            ++self->bundle_drain_polls_ > 300) {
+            ESP_LOGI(TAG, "bundle stage=drain ok=0 reason=assets_changed_or_timeout");
+            self->CancelPrepareLocked(true);
+            return;
+        }
+        if (!self->prepare_worker_->Suspend())
+            return;
+        auto owner = std::move(self->pending_bundle_);
+        self->preparing_bundle_ =
+            self->prepare_worker_->SubmitBundle(std::move(owner), self->assets_generation_);
+        if (!self->preparing_bundle_)
+            ESP_LOGI(TAG, "bundle stage=submit ok=0 reason=worker_rejected");
+        return;
+    }
+    auto& r = self->prepare_result_;
+    if (r.kind == StrokeOrderWorker::Kind::None && !self->prepare_worker_->Take(&r))
+        return;
+    if (r.assets != self->assets_generation_ ||
+        r.assets != Assets::GetInstance().StrokeAssetsGeneration()) {
+        if (r.kind == StrokeOrderWorker::Kind::Bundle)
+            ESP_LOGI(TAG, "bundle stage=completion ok=0 reason=asset_generation_fence");
+        self->controller_->Unbind();
+        self->prepare_worker_->Suspend();
+        self->preparing_bundle_ = false;
+        self->lifecycle_.SetAssetsReady(false);
+        self->ReevaluateEntryLocked();
+        r = {};
+        return;
+    }
+    if (r.kind == StrokeOrderWorker::Kind::Bundle) {
+        const char* reason = "ready";
+        bool bound = false;
+        if (!self->preparing_bundle_)
+            reason = "preparation_cancelled";
+        else if (!r.ok)
+            reason = "prepare_failed";
+        else if (!self->prepare_worker_->source().Commit(r.prepared))
+            reason = "commit_fence";
+        else if (!self->controller_->BindSource(&self->prepare_worker_->source()))
+            reason = "controller_bind_failed";
+        else
+            bound = true;
+        self->preparing_bundle_ = false;
+        r = {};
+        if (!bound) {
+            self->controller_->Unbind();
+            self->prepare_worker_->Suspend();
+        }
+        self->lifecycle_.SetAssetsReady(bound);
+        self->lifecycle_.SetPointerReady(self->HasPointerIndev());
+        self->lifecycle_.SetDeviceIdle(Application::GetInstance().GetDeviceState() ==
+                                       kDeviceStateIdle);
+        self->lifecycle_.RebuildSurface();
+        self->ReevaluateEntryLocked();
+        ESP_LOGI(TAG, "bundle stage=publish ok=%d reason=%s ready=%d entry_eligible=%d",
+                 bound, reason, self->controller_->is_ready(),
+                 self->lifecycle_.CanShowEntry());
+        return;
+    }
+    if (!self->session_.IsCurrentGeneration(r.round) || self->presented_generation_ != r.round ||
+        !self->coordinator_->IsCurrentGeneration(r.round) ||
+        self->coordinator_->HasCancelFence(r.round) ||
+        r.source != self->prepare_worker_->source().generation()) {
+        r = {};
+        return;
+    }
+    // Match the existing cancel-fence linearization. A benign try-lock miss
+    // retains exactly one completion for the next timer turn, never a queue.
+    bool candidates = false;
+    const bool accepted = self->coordinator_->TryUiAction(
+        r.round, StrokeRoundCoordinator::UiTransition::None, 0, [&]() {
+            candidates = r.ok && self->controller_->SetCandidates(r.cps, r.count) &&
+                         self->controller_->OpenCandidates();
+            if (!candidates) {
+                self->session_.MarkError();
+                self->controller_->EnterError();
+            }
+            return true;
+        });
+    if (!accepted)
+        return;
+    r = {};
+    if (!(candidates ? self->RenderCandidates() : self->RenderStatusPage("Retry", true)))
+        self->RequestAbortLocked(StrokeAbortReason::UnexpectedState);
+}
+#endif
 
 bool StrokeOrderView::ShowEntryLocked() {
     if (display_ == nullptr || controller_ == nullptr || coordinator_ == nullptr ||
@@ -577,6 +842,9 @@ void StrokeOrderView::CancelSessionLocked(bool hide_entry) {
 }
 
 void StrokeOrderView::InvalidateVisualsLocked(bool hide_entry) {
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    CancelPrepareLocked();
+#endif
     lifecycle_.SetListenHold(false);
     if (controller_ != nullptr) {
         controller_->Exit();
@@ -1018,6 +1286,9 @@ bool StrokeOrderView::ApplyVoiceUtteranceLocked(uint64_t generation, const std::
         }
         return true;
     }
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    return PrepareCandidatesLocked(generation, parsed.codepoint);
+#else
     const StrokeOrderCandidateProvider* provider = &pinyin_provider_;
     static const StrokeOrderNullHomophoneProvider kNoHomophones;
     if (!pinyin_index_.is_bound()) {
@@ -1040,6 +1311,7 @@ bool StrokeOrderView::ApplyVoiceUtteranceLocked(uint64_t generation, const std::
         return false;
     }
     return true;
+#endif
 }
 
 void StrokeOrderView::DrawTianGrid(lv_layer_t* layer, int x, int y, int size, lv_color_t color) {
@@ -1330,6 +1602,9 @@ void StrokeOrderView::OverlayDeleted(lv_event_t* event) {
     self->candidate_glyphs_.clear();
     self->current_glyph_ = CachedGlyph{};
     if (!self->deleting_overlay_) {
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+        self->CancelPrepareLocked();
+#endif
         self->lifecycle_.NotifyExternalDelete();
         self->lifecycle_.SetListenHold(false);
         if (self->controller_ != nullptr) {
@@ -1349,6 +1624,9 @@ void StrokeOrderView::EntryDeleted(lv_event_t* event) {
         return;
     }
     self->entry_ = nullptr;
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    self->CancelPrepareLocked();
+#endif
     self->lifecycle_.NotifyExternalDelete();
     self->lifecycle_.SetListenHold(false);
     self->StopAnimTimer();

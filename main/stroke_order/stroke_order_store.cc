@@ -252,8 +252,8 @@ bool StrokeOrderStore::LoadCharacter(uint32_t codepoint) {
 
     StrokeView local_strokes[kMaxStrokesPerCharacter];
     uint16_t local_count = 0;
-    if (!ParseCharacter(data_, size_, codepoint, offset, length, crc, &local_count,
-                        local_strokes)) {
+    if (!RangeInSize(offset, length, size_) ||
+        !ParseRawRecord(data_ + offset, length, codepoint, crc, &local_count, local_strokes)) {
         return false;
     }
 
@@ -313,15 +313,14 @@ bool StrokeOrderStore::FindIndexEntry(uint32_t codepoint, uint32_t* offset, uint
     return false;
 }
 
-bool StrokeOrderStore::ParseCharacter(const uint8_t* data, size_t size, uint32_t expected_cp,
-                                      uint32_t offset, uint32_t length, uint32_t expected_crc,
-                                      uint16_t* stroke_count, StrokeView* strokes) {
-    if (data == nullptr || stroke_count == nullptr || strokes == nullptr ||
-        !RangeInSize(offset, length, size) || length < kCharacterRecordHeaderSize ||
+bool StrokeOrderStore::ParseRawRecord(const uint8_t* record, uint32_t length, uint32_t expected_cp,
+                                      uint32_t expected_crc, uint16_t* stroke_count,
+                                      StrokeView* strokes) {
+    if (record == nullptr || stroke_count == nullptr || strokes == nullptr ||
+        !ValidCodepoint(expected_cp) || length < kCharacterRecordHeaderSize ||
         length > kMaxCharacterBytes) {
         return false;
     }
-    const uint8_t* record = data + offset;
     if (Crc32(record, length) != expected_crc) {
         STROKE_LOGW("character checksum mismatch");
         return false;

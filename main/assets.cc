@@ -8,6 +8,11 @@
 #if CONFIG_STROKE_ORDER_LOCAL
 #include "stroke_order/stroke_order_view.h"
 #endif
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+#include <limits>
+#include <new>
+#include "stroke_order/stroke_order_source_adapter.h"
+#endif
 #if HAVE_LVGL
 #include <spi_flash_mmap.h>
 #include "display/lcd_display.h"
@@ -72,10 +77,29 @@ bool Assets::Apply(bool refresh_display_theme) {
 }
 
 bool Assets::InitializePartition() {
-    return strategy_ ? strategy_->InitializePartition(this) : false;
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    std::lock_guard<std::mutex> lock(stroke_mapping_mutex_);
+    if (stroke_mapping_pin_ || stroke_mapping_generation_ == std::numeric_limits<uint64_t>::max())
+        return false;
+#endif
+    const bool valid = strategy_ ? strategy_->InitializePartition(this) : false;
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    if (valid) {
+        stroke_mapping_pin_ = std::shared_ptr<const uint64_t>(
+            new (std::nothrow) uint64_t(++stroke_mapping_generation_));
+        stroke_mapping_accepting_ = stroke_mapping_pin_ != nullptr;
+    }
+#endif
+    return valid;
 }
 
 bool Assets::UnApplyPartition() {
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    {
+        std::lock_guard<std::mutex> lock(stroke_mapping_mutex_);
+        stroke_mapping_accepting_ = false;
+    }
+#endif
 #if CONFIG_STROKE_ORDER_LOCAL
     // Serialize with LVGL callbacks and invalidate the entry/controller before
     // the strategy releases its mmap. Download must abort if this cannot be done.
@@ -84,12 +108,62 @@ bool Assets::UnApplyPartition() {
         return false;
     }
 #endif
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    // Never hold this mutex while acquiring LVGL above. Even a lease not yet
+    // submitted to the worker vetoes unmap/flash overwrite. Download aborts;
+    // a later explicit attempt may retry, with no main-loop wait or busy loop.
+    std::lock_guard<std::mutex> lock(stroke_mapping_mutex_);
+    if (stroke_mapping_pin_ && stroke_mapping_pin_.use_count() != 1)
+        return false;
+    stroke_mapping_pin_.reset();
+#endif
     UseBuiltInTextFontCapability();
     if (strategy_) {
         strategy_->UnApplyPartition(this);
     }
     return true;
 }
+
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+namespace {
+class StrokeMappingOwner final : public StrokeOrderBundleOwner {
+public:
+    std::shared_ptr<const uint64_t> pin;
+    Blob blobs[8];
+    Blob Catalog() const override { return blobs[0]; }
+    Blob Pinyin() const override { return blobs[1]; }
+    size_t ShardCount() const override { return 6; }
+    Blob Shard(size_t index) const override { return index < 6 ? blobs[index + 2] : Blob{}; }
+};
+}  // namespace
+
+std::shared_ptr<const StrokeOrderBundleOwner> Assets::LeaseStrokeBundle(uint64_t* generation) {
+    std::lock_guard<std::mutex> lock(stroke_mapping_mutex_);
+    if (!generation || !stroke_mapping_accepting_ || !stroke_mapping_pin_)
+        return {};
+    std::shared_ptr<StrokeMappingOwner> owner(new (std::nothrow) StrokeMappingOwner);
+    if (!owner)
+        return {};
+    static constexpr const char* names[] = {"stroke_cat.bin", "stroke_pinyin.bin", "so00.bin",
+                                            "so01.bin",       "so02.bin",          "so03.bin",
+                                            "so04.bin",       "so05.bin"};
+    owner->pin = stroke_mapping_pin_;
+    for (size_t i = 0; i < 8; ++i) {
+        void* data = nullptr;
+        size_t size = 0;
+        if (!GetAssetData(names[i], data, size) || !data || !size)
+            return {};
+        owner->blobs[i] = {static_cast<const uint8_t*>(data), size};
+    }
+    *generation = stroke_mapping_generation_;
+    return owner;
+}
+
+uint64_t Assets::StrokeAssetsGeneration() const {
+    std::lock_guard<std::mutex> lock(stroke_mapping_mutex_);
+    return stroke_mapping_accepting_ ? stroke_mapping_generation_ : 0;
+}
+#endif
 
 void Assets::UseBuiltInTextFontCapability() {
     text_font_capability_ = {

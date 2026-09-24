@@ -2,6 +2,7 @@
 
 #include "stroke_order/stroke_order_pinyin.h"
 
+#include <algorithm>
 #include <cstring>
 
 #if defined(ESP_PLATFORM)
@@ -107,8 +108,9 @@ bool StrokeOrderController::BindCatalog(const uint8_t* data, size_t size,
     catalog_blob_size_ = size;
     shard_source_ = source;
     if (!catalog_.Bind(catalog_blob_.get(), catalog_blob_size_) ||
-        catalog_.character_count() != kRuntimeCharacterCount ||
-        catalog_.shard_count() != kRuntimeShardCount || !ValidateCatalogShardsLocked()) {
+        !StrokeOrderProfileContract(StrokeOrderProfile::Legacy2000, catalog_.character_count(),
+                                    catalog_.shard_count()) ||
+        !ValidateCatalogShardsLocked()) {
         ClearDataLocked();
         return false;
     }
@@ -118,6 +120,18 @@ bool StrokeOrderController::BindCatalog(const uint8_t* data, size_t size,
              static_cast<unsigned>(catalog_.shard_count()), static_cast<unsigned>(size),
              static_cast<unsigned>(catalog_.total_shard_bytes()));
 #endif
+    return true;
+}
+
+bool StrokeOrderController::BindSource(StrokeOrderSource* source) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    StrokeOrderSource::Info info;
+    if (source == nullptr || !source->GetInfo(&info) || info.generation == 0 ||
+        !StrokeOrderProfileContract(info.profile, info.characters, info.shards))
+        return false;
+    ClearDataLocked();
+    source_ = source;
+    source_generation_ = info.generation;
     return true;
 }
 
@@ -153,6 +167,33 @@ bool StrokeOrderController::Contains(uint32_t codepoint) const {
     return ContainsLocked(codepoint);
 }
 
+uint32_t StrokeOrderController::PlanSourceCandidates(uint32_t primary, uint32_t* out,
+                                                     uint32_t capacity) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!out || !capacity || !source_ || !ReadyLocked())
+        return 0;
+    capacity = std::min(capacity, uint32_t{6});
+    uint32_t ordered[7] = {0x4E00, 0x4E59, 0x4E8C, 0x5341, 0x4E01, 0x5382, 0};
+    uint32_t inputs = 6;
+    if (primary) {
+        ordered[0] = primary;
+        inputs = 1 + std::min(source_->Homophones(source_generation_, primary, ordered + 1, 6),
+                              uint32_t{6});
+    }
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < inputs && count < capacity; ++i) {
+        uint16_t rank;
+        if (!source_->Find(source_generation_, ordered[i], &rank))
+            continue;
+        bool duplicate = false;
+        for (uint32_t j = 0; j < count; ++j)
+            duplicate |= out[j] == ordered[i];
+        if (!duplicate)
+            out[count++] = ordered[i];
+    }
+    return count;
+}
+
 bool StrokeOrderController::SetCandidates(const uint32_t* codepoints, uint32_t count) {
     std::lock_guard<std::mutex> lock(mutex_);
     candidate_count_ = 0;
@@ -181,6 +222,13 @@ bool StrokeOrderController::SetCandidatesFromPrimary(uint32_t primary,
         }
         for (uint32_t i = 0; i < written && count < kMaxCandidateInputs; ++i) {
             ordered[count++] = extra[i];
+        }
+    } else {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (source_ != nullptr) {
+            const uint32_t written =
+                source_->Homophones(source_generation_, primary, ordered + count, 6);
+            count += written < 6 ? written : 6;
         }
     }
     return SetCandidates(ordered, count);
@@ -562,7 +610,10 @@ bool StrokeOrderController::CopyCandidateGlyph(uint32_t index, uint32_t* codepoi
         return false;
     }
     const uint32_t candidate = candidates_[index];
-    if (catalog_.is_bound()) {
+    if (source_ != nullptr) {
+        if (!LoadSourceGlyphLocked(candidate, out))
+            return false;
+    } else if (catalog_.is_bound()) {
         if (!LoadCatalogGlyphLocked(candidate, out)) {
             return false;
         }
@@ -588,36 +639,76 @@ bool StrokeOrderController::CopyGlyphLocked(const StrokeOrderStore* store,
     local.resize(store->stroke_count());
     for (uint16_t s = 0; s < store->stroke_count(); ++s) {
         StrokeOrderStore::StrokeView stroke;
-        if (!store->GetStroke(s, &stroke)) {
+        if (!store->GetStroke(s, &stroke) || !CopyStrokeLocked(stroke, &local[s]))
             return false;
-        }
-        local[s].outline.resize(stroke.outline_count());
-        local[s].median.resize(stroke.median_count());
-        for (uint16_t p = 0; p < stroke.outline_count(); ++p) {
-            StrokeOrderStore::Point point;
-            if (!stroke.GetOutlinePoint(p, &point)) {
-                return false;
-            }
-            local[s].outline[p] = DecodedPoint{point.x, point.y};
-        }
-        for (uint16_t p = 0; p < stroke.median_count(); ++p) {
-            StrokeOrderStore::Point point;
-            if (!stroke.GetMedianPoint(p, &point)) {
-                return false;
-            }
-            local[s].median[p] = DecodedPoint{point.x, point.y};
-        }
     }
     *out = std::move(local);
     return !out->empty();
 }
 
+bool StrokeOrderController::CopyStrokesLocked(const StrokeOrderStore::StrokeView* strokes,
+                                              uint16_t count, std::vector<DecodedStroke>* out) {
+    if (strokes == nullptr || out == nullptr || count == 0 ||
+        count > StrokeOrderStore::kMaxStrokesPerCharacter)
+        return false;
+    std::vector<DecodedStroke> local;
+    local.resize(count);
+    for (uint16_t s = 0; s < count; ++s) {
+        if (!CopyStrokeLocked(strokes[s], &local[s]))
+            return false;
+    }
+    *out = std::move(local);
+    return !out->empty();
+}
+
+bool StrokeOrderController::CopyStrokeLocked(const StrokeOrderStore::StrokeView& stroke,
+                                             DecodedStroke* out) {
+    out->outline.resize(stroke.outline_count());
+    out->median.resize(stroke.median_count());
+    for (uint16_t p = 0; p < stroke.outline_count(); ++p) {
+        StrokeOrderStore::Point point;
+        if (!stroke.GetOutlinePoint(p, &point))
+            return false;
+        out->outline[p] = DecodedPoint{point.x, point.y};
+    }
+    for (uint16_t p = 0; p < stroke.median_count(); ++p) {
+        StrokeOrderStore::Point point;
+        if (!stroke.GetMedianPoint(p, &point))
+            return false;
+        out->median[p] = DecodedPoint{point.x, point.y};
+    }
+    return true;
+}
+
+bool StrokeOrderController::LoadSourceGlyphLocked(uint32_t cp,
+                                                  std::vector<DecodedStroke>* out) const {
+    StrokeOrderSource::Borrow borrow;
+    if (!source_->Acquire(source_generation_, cp, &borrow))
+        return false;
+    struct Release {
+        StrokeOrderSource* source;
+        StrokeOrderSource::Borrow borrow;
+        ~Release() { source->Release(borrow); }
+    } release{source_, borrow};
+    return borrow.codepoint == cp && borrow.generation == source_generation_ &&
+           CopyStrokesLocked(borrow.strokes, borrow.stroke_count, out);
+}
+
 bool StrokeOrderController::ReadyLocked() const {
+    if (source_ != nullptr) {
+        StrokeOrderSource::Info info;
+        return source_->GetInfo(&info) && info.generation == source_generation_ &&
+               StrokeOrderProfileContract(info.profile, info.characters, info.shards);
+    }
     return (catalog_.is_bound() && shard_source_ != nullptr && catalog_.character_count() > 0) ||
            (store_.is_bound() && store_.character_count() > 0);
 }
 
 bool StrokeOrderController::ContainsLocked(uint32_t codepoint) const {
+    if (source_ != nullptr) {
+        uint16_t rank;
+        return source_->Find(source_generation_, codepoint, &rank);
+    }
     return catalog_.is_bound() ? catalog_.Contains(codepoint) : store_.Contains(codepoint);
 }
 
@@ -633,7 +724,10 @@ bool StrokeOrderController::FilterCandidateLocked(uint32_t codepoint) {
         }
     }
     std::vector<DecodedStroke> decoded;
-    if (catalog_.is_bound()) {
+    if (source_ != nullptr) {
+        if (!LoadSourceGlyphLocked(codepoint, &decoded))
+            return false;
+    } else if (catalog_.is_bound()) {
         if (!LoadCatalogGlyphLocked(codepoint, &decoded)) {
             return false;
         }
@@ -653,7 +747,10 @@ bool StrokeOrderController::FilterCandidateLocked(uint32_t codepoint) {
 bool StrokeOrderController::LoadSelectedLocked(uint32_t codepoint) {
     selected_codepoint_ = codepoint;
     std::vector<DecodedStroke> decoded;
-    if (catalog_.is_bound()) {
+    if (source_ != nullptr) {
+        if (!LoadSourceGlyphLocked(codepoint, &decoded))
+            return false;
+    } else if (catalog_.is_bound()) {
         if (!LoadCatalogGlyphLocked(codepoint, &decoded)) {
             return false;
         }
@@ -737,6 +834,8 @@ void StrokeOrderController::ClearDataLocked() {
     store_.Unbind();
     catalog_.Unbind();
     shard_source_ = nullptr;
+    source_ = nullptr;
+    source_generation_ = 0;
     owned_blob_.reset();
     owned_blob_size_ = 0;
     catalog_blob_.reset();

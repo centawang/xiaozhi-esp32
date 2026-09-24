@@ -116,6 +116,11 @@ public:
     uint16_t stroke_count() const { return stroke_count_; }
     bool GetStroke(uint16_t index, StrokeView* out) const;
 
+    // Shared SOB1/SOB2 raw geometry parser. Caller owns bytes and provides room
+    // for kMaxStrokesPerCharacter views. Outputs are scratch until success.
+    static bool ParseRawRecord(const uint8_t* record, uint32_t length, uint32_t expected_cp,
+                               uint32_t expected_crc, uint16_t* stroke_count, StrokeView* strokes);
+
 #if defined(STROKE_ORDER_TESTING)
     static uint32_t TestOnlyCrc32(const uint8_t* data, size_t length);
 #endif
@@ -123,9 +128,6 @@ public:
 private:
     bool FindIndexEntry(uint32_t codepoint, uint32_t* offset, uint32_t* length,
                         uint32_t* crc) const;
-    static bool ParseCharacter(const uint8_t* data, size_t size, uint32_t expected_cp,
-                               uint32_t offset, uint32_t length, uint32_t expected_crc,
-                               uint16_t* stroke_count, StrokeView* strokes);
 
     const uint8_t* data_ = nullptr;
     size_t size_ = 0;

@@ -209,10 +209,11 @@ exceeded; do not raise `MAX_FILE_BYTES` / `kMaxFileBytes`.
 
 ## 2000-character sharded prototype and SCB1
 
-CoreS3 builds consume `scripts/tests/fixtures/stroke_order/prototype_2000/`.
-The source/audit fixture contains `selection-2000.csv`, `charset-2000.txt`, the
-pinned source lock, 2000/2000 coverage, eight per-shard manifests, SCB1, SPY1,
-licenses, NOTICE, and a closed `SHA256SUMS`. Ordinary firmware builds run only
+CoreS3 builds explicitly selecting the Legacy2000 compatibility fallback consume
+`scripts/tests/fixtures/stroke_order/prototype_2000/`. The source/audit fixture
+contains `selection-2000.csv`, `charset-2000.txt`, the pinned source lock,
+2000/2000 coverage, eight per-shard manifests, SCB1, SPY1, licenses, NOTICE,
+and a closed `SHA256SUMS`. These builds run only
 `scripts/package_stroke_order_2000.py`; they neither access HWD/Unihan/the PDF
 nor include `all.json`.
 
@@ -271,6 +272,79 @@ the eight shards, SCB1, SPY1, APL/Unicode licenses, NOTICE, compact
 `runtime.json`, and closed checksums. Asset generation rejects basename
 collisions or names over 31 bytes and requires at least 256 KiB free in the
 8 MiB partition.
+
+## 3500-character prototype (default local dataset)
+
+`scripts/tests/fixtures/stroke_order/prototype_3500/` preserves the deterministic
+host bundle for the **complete tier1, official numbers 0001–3500**, without
+renaming or regenerating its members. Its corpus ID is
+`bcd474c127b2138738d96b9bf64832ad`. The closed directory has 18 files
+(7,240,949 bytes): six SOB2 `so00.bin`–`so05.bin` shards, SCB2
+`stroke_cat.bin`, SPY2 `stroke_pinyin.bin`, selection/charset,
+`source.json`, `readings.json`, `coverage.json`, `runtime.json`, APL,
+Unicode license, NOTICE, and `SHA256SUMS` (17 entries, excluding itself).
+No raw 3500-character HWD JSON set, official PDF, or Unihan ZIP is included.
+
+The pinned graphics source is `chanind/hanzi-writer-data` commit
+`68d10a4b21150cae5e1ebbd223eed289cf32d90c`, upstream
+`skishore/makemeahanzi`; graphics and derivatives remain subject to the
+included `ARPHICPL.TXT`. Pinyin uses Unicode 16.0.0 Unihan `kMandarin` plus
+`kHanyuPinyin` under `UNICODE-LICENSE.txt`, retaining all 5,367 relations,
+1,233 groups, up to 10 readings per character and 37 members per group.
+`source.json` and `scripts/stroke_order/policy3500.py` pin the source manifest,
+selection, official PDF, Unicode input, and licenses. The transcription aid
+is the same `f9786a82be6e1672bdc60f85760a9e4a3791d1f1` version above, accepted
+by its pinned JSON SHA-256, **not a clean Git checkout claim**. It has no
+explicit in-tree license. PDF dual-person page verification, per-character
+stroke-order accuracy review, and legal/commercial review are **not complete**.
+This is a technical/audit prototype, not official certification or a
+release-ready character library.
+
+The fixture uses host v2 formats and reversible DZZ1/heatshrink compression;
+it does not change the v1 fixtures. All six shards are at most 1 MiB.
+`runtime.json` projects 7,352,753 bytes of assets **only if other assets and
+the baseline packaging overhead remain unchanged**, below the 8,126,464-byte
+limit that reserves 256 KiB in 8 MiB. That fixture projection remains arithmetic,
+not a device measurement. The immutable host package still keeps
+`device_compatible=false`; product builds separately run
+`scripts/verify_stroke_order_3500.py` for closed source-policy and production
+reader admission before staging the six shards, catalog and pinyin.
+
+`CONFIG_STROKE_ORDER_LOCAL` remains **default off**, CoreS3-only. When enabled
+without an explicit dataset selection, Kconfig now defaults to **Level1_3500**;
+`CONFIG_STROKE_ORDER_DATASET_LEGACY2000=y` remains an explicit compatibility
+fallback. Existing sdkconfigs that explicitly select Legacy2000 retain it.
+Level1_3500 has passed host tests, CoreS3 builds and on-device SO entry validation;
+on 2026-09-24 the user also reported the tested interactions normal. This is
+still a technical prototype: the licensing/PDF/accuracy reviews above and
+100-session hardware heap/audio/touch acceptance are not complete. See
+`docs/stroke-order-product-runtime.md` for the integrated worker and remaining
+validation boundaries.
+
+Offline fixture validation (requires the pinned local heatshrink sources used
+by the existing host verifier; no automatic downloads):
+
+```sh
+python3 -m unittest scripts.tests.test_stroke_order_3500 -v
+STROKE3500_BUNDLE="$PWD/scripts/tests/fixtures/stroke_order/prototype_3500" \
+  python3 -m unittest scripts.tests.test_stroke_order_v2 -v
+python3 scripts/package_stroke_order_3500.py \
+  --source scripts/tests/fixtures/stroke_order/prototype_3500 \
+  --output /outside/the/checkout/new-host-package
+python3 scripts/package_stroke_order_3500.py \
+  --verify /outside/the/checkout/new-host-package
+```
+
+The new fixture test also offers opt-in external fixed-input regeneration:
+set `STROKE3500_REGEN_INPUTS` to a local JSON file containing exactly
+`table_json`, `official_pdf`, `hanzi_writer_data`, `unihan_zip`,
+`unicode_license`, `selection_csv`, and `source_manifest`, each an absolute
+local path for the existing generator's corresponding argument. Source pins
+and the clean HWD checkout are verified by that generator; output is written
+only to a temporary directory and all 18 files must match this fixture byte
+for byte. With the variable unset the test explicitly **skips regeneration**;
+invalid configured inputs fail rather than downloading or silently replacing
+anything. Ordinary fixture validation needs none of these external inputs.
 
 ## SPY1 pinyin index (`stroke_pinyin.bin`, version 1)
 

@@ -8,7 +8,6 @@
 #if defined(ESP_PLATFORM)
 #include <esp_heap_caps.h>
 #include <esp_log.h>
-#include <esp_memory_utils.h>
 #endif
 
 /**
@@ -47,8 +46,8 @@ inline StrokeOrderOwnedBlob StrokeOrderAllocateOwned(size_t size, const char* ta
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)));
         return StrokeOrderOwnedBlob();
     }
-    ESP_LOGI(tag, "owned copy ptr=%p size=%u caps=SPIRAM|8BIT ptr_in_psram=%d spiram_free=%u", ptr,
-             static_cast<unsigned>(size), esp_ptr_external_ram(ptr) ? 1 : 0,
+    ESP_LOGD(tag, "owned copy size=%u caps=SPIRAM|8BIT spiram_free=%u",
+             static_cast<unsigned>(size),
              static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
     return StrokeOrderOwnedBlob(ptr);
 #else

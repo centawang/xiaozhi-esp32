@@ -1127,13 +1127,34 @@ menu "Stroke Order"
         default n
         depends on BOARD_TYPE_M5STACK_CORE_S3 && !USE_EMOTE_MESSAGE_STYLE
         help
-            Compile the bounded SCB1/SOB1/SPY1 parsers, CoreS3 笔划 overlay,
-            and package the reviewed 2000-character, eight-shard prototype into
-            default assets without network access. The clickable entry appears
-            only when the catalog, every shard, the matching SPY1 index, and LVGL
-            pointer input all validate. Any incomplete asset set fails closed.
-            This is not a release 字库, not official certification, does not parse
-            SVG on device, and does not implement type=stroke.
+            Compile the bounded stroke-order readers and CoreS3 笔划 overlay.
+            Package the selected reviewed prototype without network access.
+            Any incomplete asset set fails closed. This is not a release 字库,
+            not official certification, does not parse SVG on device, and does
+            not implement type=stroke.
+
+    choice STROKE_ORDER_DATASET
+        prompt "Local stroke-order dataset"
+        depends on STROKE_ORDER_LOCAL
+        default STROKE_ORDER_DATASET_LEVEL1_3500
+
+        config STROKE_ORDER_DATASET_LEGACY2000
+            bool "Legacy2000 (compatibility fallback, SCB1/SOB1/SPY1)"
+            help
+                Explicit compatibility fallback to the 2000-character prototype
+                and its synchronous local overlay path.
+
+        config STROKE_ORDER_DATASET_LEVEL1_3500
+            bool "Level1_3500 (default technical prototype, SCB2/SOB2/SPY2)"
+            help
+                Stage exactly six shards plus catalog and pinyin after closed
+                source-policy and W4a device-reader verification. Uses a bounded
+                background worker and pinned assets for the local overlay.
+                Host tests, CoreS3 builds and on-device SO entry validation have
+                passed. Still a technical prototype: licensing/commercial and
+                stroke-order accuracy reviews, plus 100-session hardware
+                heap/audio/touch validation, remain incomplete.
+    endchoice
 endmenu
 
 endmenu

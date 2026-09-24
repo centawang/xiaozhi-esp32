@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+#include "stroke_order/stroke_order_worker.h"
+#endif
+
 #if defined(HAVE_LVGL)
 #include <lvgl.h>
 #endif
@@ -32,6 +36,7 @@ public:
     static StrokeOrderView& GetInstance();
 
     StrokeOrderView();
+    ~StrokeOrderView();
     StrokeOrderView(const StrokeOrderView&) = delete;
     StrokeOrderView& operator=(const StrokeOrderView&) = delete;
 
@@ -78,6 +83,20 @@ private:
     static void EntryDeleted(lv_event_t* event);
     static void CandidateDraw(lv_event_t* event);
     static void AnimTimerCb(lv_timer_t* timer);
+#if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
+    static void PrepareTimerCb(lv_timer_t* timer);
+    bool StartPrepareWorkerLocked();
+    bool PrepareCandidatesLocked(uint64_t generation, uint32_t primary);
+    void CancelPrepareLocked(bool cancel_bundle = false);
+    std::shared_ptr<StrokeOrderWorker> prepare_worker_;
+    lv_timer_t* prepare_timer_ = nullptr;
+    StrokeOrderWorker::Result prepare_result_;
+    uint64_t assets_generation_ = 0;
+    std::shared_ptr<const StrokeOrderBundleOwner> pending_bundle_;
+    uint16_t bundle_drain_polls_ = 0;
+    bool preparing_bundle_ = false;
+    bool prepare_shutdown_ = false;  // Shutdown is terminal; no overlapping replacement task.
+#endif
 
     static void DisarmClick(lv_obj_t* obj);
     static uint32_t IndexFromUserData(lv_obj_t* obj);

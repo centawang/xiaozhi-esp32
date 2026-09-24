@@ -115,8 +115,9 @@ int main(int argc, char** argv) {
     static_assert(StrokeOrderPinyinIndex::kMaxCharacters >= 2048);
     static_assert(StrokeOrderPinyinIndex::kMaxGroups >= 1047);
     static_assert(StrokeOrderPinyinIndex::kMaxFileBytes == 65536);
-    static_assert(StrokeOrderController::kRuntimeCharacterCount == 2000);
-    static_assert(StrokeOrderController::kRuntimeShardCount == 8);
+    // Runtime corpus sizes are admitted by the shared source profile contract.
+    Expect(StrokeOrderProfileContract(StrokeOrderProfile::Legacy2000, 2000, 8),
+           "legacy profile remains exactly 2000/8");
     if (argc != 14) {
         std::cerr << "usage: sharded_harness <catalog> <pinyin> <mismatched-pinyin> <so00> ... "
                      "<so07> <first-cp> <last-cp>\n";
