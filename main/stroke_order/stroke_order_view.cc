@@ -9,6 +9,8 @@
 #include "stroke_order/stroke_order_parse.h"
 #include "stroke_order/stroke_order_ui_action.h"
 
+#include <cstring>
+
 #include <esp_log.h>
 #include <esp_timer.h>
 #if CONFIG_STROKE_ORDER_DATASET_LEVEL1_3500
@@ -940,6 +942,7 @@ void StrokeOrderView::DestroyOverlay() {
     current_glyph_ = CachedGlyph{};
     StopAnimTimer();
     canvas_ = nullptr;
+    canvas_rendered_ = false;
     for (uint32_t i = 0; i < StrokeOrderLayout::kControlCount; ++i) {
         control_buttons_[i] = nullptr;
     }
@@ -985,6 +988,7 @@ bool StrokeOrderView::CacheCandidateGlyph(uint32_t index, CachedGlyph* out) {
 }
 
 bool StrokeOrderView::CacheLoadedGlyph() {
+    canvas_rendered_ = false;
     if (controller_ == nullptr) {
         return false;
     }
@@ -1022,11 +1026,12 @@ bool StrokeOrderView::RenderCandidates() {
     StopAnimTimer();
     candidate_glyphs_.clear();
     current_glyph_ = CachedGlyph{};
-    lv_obj_clean(overlay_);
-    canvas_ = nullptr;
     for (uint32_t i = 0; i < StrokeOrderLayout::kControlCount; ++i) {
         control_buttons_[i] = nullptr;
     }
+    lv_obj_clean(overlay_);
+    canvas_ = nullptr;
+    canvas_rendered_ = false;
     lv_obj_t* title = lv_label_create(overlay_);
     lv_label_set_text(title, "Stroke");
     lv_obj_set_pos(title, StrokeOrderLayout::kPad, 14);
@@ -1039,11 +1044,11 @@ bool StrokeOrderView::RenderCandidates() {
     lv_obj_set_size(close, StrokeOrderLayout::kMinTouchTarget, StrokeOrderLayout::kMinTouchTarget);
     StyleControl(close, theme);
     lv_obj_set_user_data(close, &control_ids_[4]);
+    control_buttons_[4] = close;
     lv_obj_add_event_cb(close, ControlClicked, LV_EVENT_CLICKED, this);
     lv_obj_t* close_label = lv_label_create(close);
     lv_label_set_text(close_label, "X");
     lv_obj_center(close_label);
-    control_buttons_[4] = close;
 
     const uint32_t count = controller_->candidate_count();
     candidate_glyphs_.reserve(StrokeOrderLayout::kMaxCandidates);
@@ -1092,12 +1097,13 @@ bool StrokeOrderView::RenderAnimationPage() {
     // Candidate/RetryLoad admission already established the fresh playback
     // token. Rebuilding this page must not erase it (teardown still resets).
     StopAnimTimer(false);
-    lv_obj_clean(overlay_);
-    showing_candidates_ = false;
-    canvas_ = nullptr;
     for (uint32_t i = 0; i < StrokeOrderLayout::kControlCount; ++i) {
         control_buttons_[i] = nullptr;
     }
+    lv_obj_clean(overlay_);
+    showing_candidates_ = false;
+    canvas_ = nullptr;
+    canvas_rendered_ = false;
     int tx = 0;
     int ty = 0;
     int tw = 0;
@@ -1130,11 +1136,11 @@ bool StrokeOrderView::RenderAnimationPage() {
         lv_obj_set_size(button, w, h);
         StyleControl(button, theme);
         lv_obj_set_user_data(button, &control_ids_[i]);
+        control_buttons_[i] = button;
         lv_obj_add_event_cb(button, ControlClicked, LV_EVENT_CLICKED, this);
         lv_obj_t* label = lv_label_create(button);
         lv_label_set_text(label, kLabels[i]);
         lv_obj_center(label);
-        control_buttons_[i] = button;
     }
     // Draw cue0 before starting the timer. Even if its first callback is late,
     // the shared admission clock permits only another cue0 draw on that turn.
@@ -1153,12 +1159,13 @@ bool StrokeOrderView::RenderErrorPage() {
     }
     auto* theme = static_cast<LvglTheme*>(display_->GetTheme());
     StopAnimTimer();
-    lv_obj_clean(overlay_);
-    showing_candidates_ = false;
-    canvas_ = nullptr;
     for (uint32_t i = 0; i < StrokeOrderLayout::kControlCount; ++i) {
         control_buttons_[i] = nullptr;
     }
+    lv_obj_clean(overlay_);
+    showing_candidates_ = false;
+    canvas_ = nullptr;
+    canvas_rendered_ = false;
     lv_obj_t* label = lv_label_create(overlay_);
     lv_label_set_text(label, "Retry / Back");
     if (theme != nullptr) {
@@ -1178,6 +1185,7 @@ bool StrokeOrderView::RenderErrorPage() {
             StyleControl(retry, theme);
         }
         lv_obj_set_user_data(retry, &control_ids_[2]);
+        control_buttons_[2] = retry;
         lv_obj_add_event_cb(retry, ControlClicked, LV_EVENT_CLICKED, this);
         lv_obj_t* retry_label = lv_label_create(retry);
         lv_label_set_text(retry_label, "R");
@@ -1192,6 +1200,7 @@ bool StrokeOrderView::RenderErrorPage() {
             StyleControl(back, theme);
         }
         lv_obj_set_user_data(back, &control_ids_[3]);
+        control_buttons_[3] = back;
         lv_obj_add_event_cb(back, ControlClicked, LV_EVENT_CLICKED, this);
         lv_obj_t* back_label = lv_label_create(back);
         lv_label_set_text(back_label, "<");
@@ -1206,12 +1215,13 @@ bool StrokeOrderView::RenderStatusPage(const char* title, bool show_retry) {
     }
     auto* theme = static_cast<LvglTheme*>(display_->GetTheme());
     StopAnimTimer();
-    lv_obj_clean(overlay_);
-    showing_candidates_ = false;
-    canvas_ = nullptr;
     for (uint32_t i = 0; i < StrokeOrderLayout::kControlCount; ++i) {
         control_buttons_[i] = nullptr;
     }
+    lv_obj_clean(overlay_);
+    showing_candidates_ = false;
+    canvas_ = nullptr;
+    canvas_rendered_ = false;
     lv_obj_t* label = lv_label_create(overlay_);
     lv_label_set_text(label, title);
     if (theme != nullptr) {
@@ -1231,6 +1241,7 @@ bool StrokeOrderView::RenderStatusPage(const char* title, bool show_retry) {
             StyleControl(retry, theme);
         }
         lv_obj_set_user_data(retry, &control_ids_[2]);
+        control_buttons_[2] = retry;
         lv_obj_add_event_cb(retry, ControlClicked, LV_EVENT_CLICKED, this);
         lv_obj_t* retry_label = lv_label_create(retry);
         lv_label_set_text(retry_label, "R");
@@ -1245,6 +1256,7 @@ bool StrokeOrderView::RenderStatusPage(const char* title, bool show_retry) {
             StyleControl(close, theme);
         }
         lv_obj_set_user_data(close, &control_ids_[4]);
+        control_buttons_[4] = close;
         lv_obj_add_event_cb(close, ControlClicked, LV_EVENT_CLICKED, this);
         lv_obj_t* close_label = lv_label_create(close);
         lv_label_set_text(close_label, "X");
@@ -1340,12 +1352,32 @@ void StrokeOrderView::DrawStrokeOutline(lv_layer_t* layer, const CachedStroke& s
     const int inner = size - (2 * kGridInset);
     const int origin_x = x + kGridInset;
     const int origin_y = y + kGridInset;
-    for (size_t i = 1; i < stroke.outline.size(); ++i) {
-        DrawLine(layer, StrokeOrderLayout::Scale(stroke.outline[i - 1].x, origin_x, inner),
-                 StrokeOrderLayout::Scale(stroke.outline[i - 1].y, origin_y, inner),
-                 StrokeOrderLayout::Scale(stroke.outline[i].x, origin_x, inner),
-                 StrokeOrderLayout::Scale(stroke.outline[i].y, origin_y, inner), color, width);
+    if (stroke.outline.size() > StrokeOrderStore::kMaxOutlinePointsPerStroke) {
+        // Defensive fallback; validated Controller glyphs never exceed this bound.
+        for (size_t i = 1; i < stroke.outline.size(); ++i) {
+            DrawLine(layer, StrokeOrderLayout::Scale(stroke.outline[i - 1].x, origin_x, inner),
+                     StrokeOrderLayout::Scale(stroke.outline[i - 1].y, origin_y, inner),
+                     StrokeOrderLayout::Scale(stroke.outline[i].x, origin_x, inner),
+                     StrokeOrderLayout::Scale(stroke.outline[i].y, origin_y, inner), color, width);
+        }
+        return;
     }
+    for (size_t i = 0; i < stroke.outline.size(); ++i) {
+        outline_points_[i].x = StrokeOrderLayout::Scale(stroke.outline[i].x, origin_x, inner);
+        outline_points_[i].y = StrokeOrderLayout::Scale(stroke.outline[i].y, origin_y, inner);
+    }
+    lv_draw_line_dsc_t dsc;
+    lv_draw_line_dsc_init(&dsc);
+    dsc.color = color;
+    dsc.width = width;
+    dsc.round_start = 1;
+    dsc.round_end = 1;
+    dsc.opa = LV_OPA_COVER;
+    dsc.points = outline_points_;
+    dsc.point_cnt = static_cast<int32_t>(stroke.outline.size());
+    // LVGL 9.5 copies points now, then rasterizes each adjacent pair in order
+    // with these same round caps. Preserve duplicate/closing points exactly.
+    lv_draw_line(layer, &dsc);
 }
 
 void StrokeOrderView::DrawStartMarker(lv_layer_t* layer, const CachedStroke& stroke, int x, int y,
@@ -1372,7 +1404,7 @@ void StrokeOrderView::DrawStartMarker(lv_layer_t* layer, const CachedStroke& str
     lv_draw_rect(layer, &dsc, &area);
 }
 
-void StrokeOrderView::RedrawCanvas() {
+void StrokeOrderView::RedrawCanvas(bool force) {
     if (canvas_ == nullptr || !lv_obj_is_valid(canvas_) || controller_ == nullptr ||
         display_ == nullptr) {
         return;
@@ -1381,6 +1413,21 @@ void StrokeOrderView::RedrawCanvas() {
     if (theme == nullptr) {
         return;
     }
+    const CanvasVisualState visual{controller_->current_stroke(),
+                                   controller_->completed_stroke_count(),
+                                   controller_->in_gap(),
+                                   controller_->state(),
+                                   lv_color_to_u32(theme->background_color()),
+                                   lv_color_to_u32(theme->text_color())};
+    // Cue/gap elapsed progress cannot affect pixels. Do not skip admission or
+    // clock settlement in the timer, only this synchronous raster submission.
+    // No canvas/glyph pointer is cached: all rebuilds/controls force a draw and
+    // every canvas teardown invalidates this value, even if LVGL reuses an address.
+    if (!force && canvas_rendered_ && canvas_visual_ == visual) {
+        return;
+    }
+    canvas_visual_ = visual;
+    canvas_rendered_ = true;
     const int tw = StrokeOrderLayout::kTianSize;
     lv_canvas_fill_bg(canvas_, theme->background_color(), LV_OPA_COVER);
     lv_layer_t layer;
@@ -1430,10 +1477,9 @@ void StrokeOrderView::UpdateControlLabels() {
     if (label == nullptr) {
         return;
     }
-    if (controller_->state() == StrokeOrderUiState::Paused) {
-        lv_label_set_text(label, ">");
-    } else {
-        lv_label_set_text(label, "II");
+    const char* text = controller_->state() == StrokeOrderUiState::Paused ? ">" : "II";
+    if (std::strcmp(lv_label_get_text(label), text) != 0) {
+        lv_label_set_text(label, text);
     }
 }
 
@@ -1450,6 +1496,14 @@ bool StrokeOrderView::HandleControlLocked(uint32_t index) {
         StrokeOrderUiAction::Back, StrokeOrderUiAction::Exit};
     auto action = actions[index];
     const auto voice = session_.phase();
+    // Only a completed local demonstration returns to its retained candidates.
+    // Missing data/session or a non-idle device keeps the safe Exit path.
+    if (index == 4 && controller_->state() == StrokeOrderUiState::Completed &&
+        voice == StrokeOrderVoicePhase::LocalPlayback && controller_->is_ready() &&
+        controller_->candidate_count() != 0 &&
+        Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+        action = StrokeOrderUiAction::Back;
+    }
     if (index == 2 && controller_->state() == StrokeOrderUiState::Error &&
         (voice == StrokeOrderVoicePhase::Candidates ||
          voice == StrokeOrderVoicePhase::LocalPlayback)) {
@@ -1463,6 +1517,12 @@ bool StrokeOrderView::HandleControlLocked(uint32_t index) {
     if (!StrokeOrderApplyUiAction(*coordinator_, *controller_, session_, anim_clock_, generation,
                                   action, static_cast<uint64_t>(esp_timer_get_time()))) {
         return false;
+    }
+    if (index == 4) {
+        // Admission must precede disarm so a try-lock miss remains retryable.
+        // Back renders synchronously and deletes this button: never touch it
+        // after presentation (its address could already belong to a new object).
+        DisarmClick(control_buttons_[4]);
     }
     // Rendering may call out to Application on failure; do not hold coordinator
     // mutex across it. A fence-first rejected action never reaches these effects.
@@ -1576,14 +1636,12 @@ void StrokeOrderView::ControlClicked(lv_event_t* event) {
         return;
     }
     const uint32_t index = IndexFromUserData(target);
-    if (index >= StrokeOrderLayout::kControlCount) {
+    // Every page retires slots before cleaning children and registers each new
+    // control before attaching this callback, including status/error controls.
+    if (index >= StrokeOrderLayout::kControlCount || target != self->control_buttons_[index]) {
         return;
     }
-    if (self->HandleControlLocked(index) && index == 4) {
-        // Exit stops animation but leaves deletion to the main-task abort.
-        // Benign lock contention must not permanently disable Exit.
-        DisarmClick(target);
-    }
+    self->HandleControlLocked(index);
 }
 
 void StrokeOrderView::OverlayDeleted(lv_event_t* event) {
@@ -1598,6 +1656,7 @@ void StrokeOrderView::OverlayDeleted(lv_event_t* event) {
         self->overlay_ = nullptr;
     }
     self->canvas_ = nullptr;
+    self->canvas_rendered_ = false;
     self->showing_candidates_ = false;
     self->candidate_glyphs_.clear();
     self->current_glyph_ = CachedGlyph{};
@@ -1683,13 +1742,16 @@ void StrokeOrderView::AnimTimerCb(lv_timer_t* timer) {
         lv_timer_pause(timer);
         return;
     }
+    // Capture the timer-only token before admission consumes it. Rejection must
+    // not render or consume it; a successful first arm still submits cue0.
+    const bool first_frame = self->anim_clock_.first_frame_pending();
     if (self->coordinator_ == nullptr ||
         !StrokeOrderApplyAnimationTick(*self->coordinator_, *self->controller_, self->session_,
                                        self->anim_clock_, self->presented_generation_,
                                        static_cast<uint64_t>(esp_timer_get_time()))) {
         return;
     }
-    self->RedrawCanvas();
+    self->RedrawCanvas(first_frame);
     self->UpdateControlLabels();
     if (self->controller_->state() != StrokeOrderUiState::Animating) {
         lv_timer_pause(timer);
