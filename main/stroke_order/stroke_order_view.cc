@@ -188,11 +188,9 @@ bool StrokeOrderView::SuspendAssets() {
     if (suspending_worker)
         suspending_worker->Suspend();
 #endif
-    const uint64_t generation = coordinator_ != nullptr ? coordinator_->CurrentGeneration() : 0;
-    if (generation != 0) {
-        Application::GetInstance().RequestAbortStrokeRound(generation,
-                                                           StrokeAbortReason::AssetSuspend);
-    }
+    // Lifecycle cancellation includes an in-flight start in the inactive
+    // teardown gap; resolve current atomically in Application's command domain.
+    Application::GetInstance().RequestAbortStrokeRound(0, StrokeAbortReason::AssetSuspend);
 #if !defined(HAVE_LVGL)
     if (controller_ != nullptr) {
         controller_->Unbind();
@@ -308,11 +306,7 @@ void StrokeOrderView::SetVoiceTransportAvailable(bool available) {
 }
 
 void StrokeOrderView::Shutdown() {
-    const uint64_t generation = coordinator_ != nullptr ? coordinator_->CurrentGeneration() : 0;
-    if (generation != 0) {
-        Application::GetInstance().RequestAbortStrokeRound(generation,
-                                                           StrokeAbortReason::SurfaceDeleted);
-    }
+    Application::GetInstance().RequestAbortStrokeRound(0, StrokeAbortReason::SurfaceDeleted);
 #if defined(HAVE_LVGL)
     if (display_ != nullptr) {
         DisplayLockGuard lock(display_);
@@ -861,8 +855,7 @@ void StrokeOrderView::InvalidateVisualsLocked(bool hide_entry) {
 }
 
 void StrokeOrderView::RequestAbortLocked(StrokeAbortReason reason) {
-    const uint64_t generation = coordinator_ != nullptr ? coordinator_->CurrentGeneration() : 0;
-    Application::GetInstance().RequestAbortStrokeRound(generation, reason);
+    Application::GetInstance().RequestAbortStrokeRound(0, reason);
 }
 
 void StrokeOrderView::StopAnimTimer(bool reset_clock) {
@@ -1496,14 +1489,17 @@ bool StrokeOrderView::HandleControlLocked(uint32_t index) {
         StrokeOrderUiAction::Back, StrokeOrderUiAction::Exit};
     auto action = actions[index];
     const auto voice = session_.phase();
-    // Only a completed local demonstration returns to its retained candidates.
-    // Missing data/session or a non-idle device keeps the safe Exit path.
-    if (index == 4 && controller_->state() == StrokeOrderUiState::Completed &&
-        voice == StrokeOrderVoicePhase::LocalPlayback && controller_->is_ready() &&
-        controller_->candidate_count() != 0 &&
-        Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
-        action = StrokeOrderUiAction::Back;
-    }
+    const auto state = controller_->state();
+    // Demonstration X cancels this word and re-enters the same main-task flow
+    // as SO, with a fresh voice generation/channel. Only '<' retains candidates.
+    // Level1_3500 candidate preparation displays Loading using Connecting plus
+    // a Candidates session; actual voice Connect/Speak X must still just exit.
+    const bool restart_voice =
+        index == 4 && controller_->is_ready() &&
+        Application::GetInstance().GetDeviceState() == kDeviceStateIdle &&
+        (state == StrokeOrderUiState::Animating || state == StrokeOrderUiState::Paused ||
+         state == StrokeOrderUiState::Completed ||
+         (state == StrokeOrderUiState::Connecting && voice == StrokeOrderVoicePhase::Candidates));
     if (index == 2 && controller_->state() == StrokeOrderUiState::Error &&
         (voice == StrokeOrderVoicePhase::Candidates ||
          voice == StrokeOrderVoicePhase::LocalPlayback)) {
@@ -1520,8 +1516,8 @@ bool StrokeOrderView::HandleControlLocked(uint32_t index) {
     }
     if (index == 4) {
         // Admission must precede disarm so a try-lock miss remains retryable.
-        // Back renders synchronously and deletes this button: never touch it
-        // after presentation (its address could already belong to a new object).
+        // Disarm the old X before the main task tears down its surface; a
+        // duplicate click cannot start or abort another generation.
         DisarmClick(control_buttons_[4]);
     }
     // Rendering may call out to Application on failure; do not hold coordinator
@@ -1535,7 +1531,12 @@ bool StrokeOrderView::HandleControlLocked(uint32_t index) {
         RedrawCanvas();
         UpdateControlLabels();
     }
-    if (action == StrokeOrderUiAction::Exit) {
+    if (restart_voice) {
+        // Exit admission already stopped playback. Publish the old round's
+        // cancel fence before queueing the bounded replacement start; never
+        // synthesize Speak before the normal listening-readiness checks pass.
+        Application::GetInstance().RequestStartStrokeRound(generation);
+    } else if (action == StrokeOrderUiAction::Exit) {
         Application::GetInstance().RequestAbortStrokeRound(generation,
                                                            StrokeAbortReason::UserClose);
     } else if (action == StrokeOrderUiAction::RetryVoice) {

@@ -705,17 +705,10 @@ void Application::InitializeProtocol() {
                                StrokeRoundCoordinator::ChannelCloseDecision::AbortStroke
                        ? close.generation
                        : 0);
-        bool close_fenced = false;
         if (closing_generation != 0) {
-            std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
-            close_fenced = stroke_round_.PublishCancelFence(closing_generation);
-        }
-        if (close_fenced) {
-            // Publish the exact generation fence on the transport callback
-            // thread. Main-task cleanup may run after STATE_CHANGED.
-            Schedule([this, closing_generation]() {
-                AbortStrokeRound(closing_generation, StrokeAbortReason::ChannelClosed);
-            });
+            // Fence AND invalidate any pending/in-flight replacement now. A
+            // scheduled abort alone runs after START in the main loop.
+            RequestAbortStrokeRound(closing_generation, StrokeAbortReason::ChannelClosed);
             return;
         }
         Schedule([this, &board, close]() {
@@ -1092,32 +1085,57 @@ void Application::StopListening() {
 
 #if CONFIG_STROKE_ORDER_LOCAL
 void Application::RequestStartStrokeRound(uint64_t expected_generation) {
-    // A retry/replacement can race the queued STATE_CHANGED handler from the
-    // old round. Fence only the explicitly expected round (or the current one
-    // for a fresh entry) before publishing the start event.
-    {
-        std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
-        if (expected_generation != 0) {
-            stroke_round_.PublishCancelFence(expected_generation);
-        } else {
-            stroke_round_.PublishCurrentCancelFence();
-        }
-    }
+    // Publish the fence and the bounded command in the same domain as cancel.
+    // In particular, an abort cannot slip between those two publications.
+    std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
     {
         std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        const uint64_t current = stroke_round_.CurrentGeneration();
+        if ((expected_generation != 0 && expected_generation != current) ||
+            (current != 0 && stroke_round_.HasCancelFence(current)) ||
+            stroke_start_sequence_ >= UINT64_MAX - 1) {
+            return;
+        }
+        stroke_round_.PublishCancelFence(current);
+        ++stroke_start_sequence_;
         stroke_start_pending_ = true;
-        stroke_start_expected_generation_ = expected_generation;
+        // Generation 0 means a fresh SO click, not a wildcard delayed restart.
+        stroke_start_expected_generation_ = current;
     }
     xEventGroupSetBits(event_group_, MAIN_EVENT_STROKE_START);
 }
 
-void Application::RequestAbortStrokeRound(uint64_t expected_generation, StrokeAbortReason reason) {
-    if (expected_generation != 0) {
-        std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
-        stroke_round_.PublishCancelFence(expected_generation);
+void Application::InvalidateStrokeStartLocked(uint64_t expected_generation) {
+    // The source remains recorded after dequeue, until BeginRound commits.
+    // Thus cancel invalidates an in-flight start as well as a pending slot.
+    if (expected_generation == 0 || expected_generation == stroke_start_expected_generation_) {
+        stroke_start_pending_ = false;
+        if (stroke_start_sequence_ != UINT64_MAX) {
+            ++stroke_start_sequence_;
+        }
     }
+}
+
+void Application::RequestAbortStrokeRound(uint64_t expected_generation, StrokeAbortReason reason) {
+    std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
     {
         std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        const uint64_t current = stroke_round_.CurrentGeneration();
+        // A stale old abort must not overwrite the one abort slot for a newer
+        // round. During replacement teardown current may be 0: retain identity
+        // checking there, but never use IsLatestGeneration as start admission.
+        if (expected_generation != 0 && expected_generation != current &&
+            !(current == 0 && stroke_round_.IsLatestGeneration(expected_generation))) {
+            return;
+        }
+        InvalidateStrokeStartLocked(expected_generation);
+        if (expected_generation == 0) {
+            expected_generation = current;
+        }
+        if (expected_generation == 0) {
+            return;  // cancelled a fresh SO/in-flight start; no active round to hide
+        }
+        stroke_round_.PublishCancelFence(expected_generation);
         stroke_abort_pending_ = true;
         stroke_abort_expected_generation_ = expected_generation;
         stroke_abort_reason_ = reason;
@@ -1128,15 +1146,9 @@ void Application::RequestAbortStrokeRound(uint64_t expected_generation, StrokeAb
 uint64_t Application::CurrentStrokeGeneration() const { return stroke_round_.CurrentGeneration(); }
 
 void Application::PublishStrokeCancelFence(StrokeAbortReason reason) {
-    uint64_t generation = 0;
-    {
-        std::lock_guard<std::recursive_mutex> start_lock(stroke_listening_start_mutex_);
-        generation = stroke_round_.PublishCurrentCancelFence();
-    }
-    if (generation == 0) {
-        return;
-    }
-    RequestAbortStrokeRound(generation, reason);
+    // Resolve current AND cancel pending starts atomically, including the
+    // inactive gap between retiring the old round and committing its successor.
+    RequestAbortStrokeRound(0, reason);
 }
 
 bool Application::StrokeVoiceRoutingAvailable() const {
@@ -1186,15 +1198,17 @@ void Application::AbandonCancelledStrokeListening(uint64_t expected_generation) 
 
 void Application::HandleStrokeStartEvent() {
     uint64_t expected_generation = 0;
+    uint64_t sequence = 0;
     {
         std::lock_guard<std::mutex> lock(stroke_command_mutex_);
         if (!stroke_start_pending_) {
             return;
         }
         expected_generation = stroke_start_expected_generation_;
+        sequence = stroke_start_sequence_;
         stroke_start_pending_ = false;
     }
-    BeginStrokeRoundFromMain(expected_generation);
+    BeginStrokeRoundFromMain(expected_generation, sequence);
 }
 
 bool Application::IsStrokeAbortPending(uint64_t expected_generation) {
@@ -1218,14 +1232,18 @@ void Application::HandleStrokeAbortEvent() {
     AbortStrokeRound(expected_generation, reason);
 }
 
-void Application::BeginStrokeRoundFromMain(uint64_t expected_generation) {
+void Application::BeginStrokeRoundFromMain(uint64_t expected_generation, uint64_t sequence) {
     if (GetDeviceState() != kDeviceStateIdle) {
         return;
     }
-    const uint64_t current = stroke_round_.CurrentGeneration();
-    if (expected_generation != 0 && expected_generation != current &&
-        !(current == 0 && stroke_round_.IsLatestGeneration(expected_generation))) {
-        return;
+    uint64_t current = 0;
+    {
+        std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        current = stroke_round_.CurrentGeneration();
+        if (sequence != stroke_start_sequence_ || sequence == UINT64_MAX ||
+            expected_generation != current) {
+            return;
+        }
     }
     if (current != 0) {
         AbortStrokeRound(current, StrokeAbortReason::ReplacedByNewStroke);
@@ -1235,23 +1253,35 @@ void Application::BeginStrokeRoundFromMain(uint64_t expected_generation) {
 
     const bool stroke_voice = StrokeVoiceRoutingAvailable() &&
                               stroke_voice_transport_available_.load(std::memory_order_acquire);
+    // No command lock spans LVGL, protocol callbacks, or audio teardown. A
+    // reentrant/async cancel during any of these calls invalidates sequence.
+    if (stroke_voice) {
+        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+            stroke_round_.CloseCurrentChannel();
+            protocol_->CloseAudioChannel();
+        }
+        DrainStreamingAudio();
+    }
+    uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        if (sequence != stroke_start_sequence_ || sequence == UINT64_MAX ||
+            stroke_round_.CurrentGeneration() != 0) {
+            return;
+        }
+        // This is the start/cancel linearization point. Before it, cancel wins
+        // via sequence; after it, cancel fences the new generation and the
+        // existing open/listening-readiness gates prevent capture or Speak.
+        generation = stroke_round_.BeginRound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
+        stroke_start_expected_generation_ = generation;
+    }
+    if (stroke_round_.HasCancelFence(generation) || IsStrokeAbortPending(generation)) {
+        return;
+    }
     if (!stroke_voice) {
-        const uint64_t generation =
-            stroke_round_.BeginRound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
         BeginLocalStrokeCandidatesFromMain(generation);
         return;
     }
-
-    // A stroke capture always owns a fresh channel. Retire and close any old
-    // channel before publishing the new generation so delayed close callbacks
-    // cannot be mistaken for the new round.
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
-        stroke_round_.CloseCurrentChannel();
-        protocol_->CloseAudioChannel();
-    }
-    DrainStreamingAudio();
-    const uint64_t generation =
-        stroke_round_.BeginRound(static_cast<uint64_t>(esp_timer_get_time() / 1000));
     if (!StrokeOrderView::GetInstance().StartVoiceSessionFromMain(generation)) {
         AbortStrokeRound(generation, StrokeAbortReason::StartFailed);
         return;
@@ -1272,6 +1302,14 @@ void Application::BeginLocalStrokeCandidatesFromMain(uint64_t generation) {
 }
 
 void Application::AbortStrokeRound(uint64_t expected_generation, StrokeAbortReason reason) {
+    if (reason != StrokeAbortReason::ReplacedByNewStroke) {
+        // Main-task direct aborts (timeouts, close, etc.) share the same start
+        // invalidation as asynchronous publishers. Replacement's own teardown
+        // is the sole exception; it must not revoke its own admission token.
+        std::lock_guard<std::mutex> lock(stroke_command_mutex_);
+        InvalidateStrokeStartLocked(expected_generation);
+        stroke_round_.PublishCancelFence(expected_generation);
+    }
     if (expected_generation == 0) {
         StrokeOrderView::GetInstance().AbortFromMain(0);
         return;

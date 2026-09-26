@@ -372,7 +372,10 @@ class StrokeOrderUiTest(unittest.TestCase):
             )
         ]
         self.assertIn("MatchStrokeOpenAttempt(info.open_attempt_id)", channel_close)
-        self.assertLess(channel_close.index("PublishCancelFence"), channel_close.index("Schedule("))
+        # A fence-only scheduled abort runs after START. Use the publisher that
+        # also invalidates the bounded pending/in-flight start transaction.
+        self.assertLess(channel_close.index("RequestAbortStrokeRound"), channel_close.index("Schedule("))
+        self.assertNotIn("stroke_round_.PublishCancelFence", channel_close)
         final_gate = application[
             application.index("void Application::StartListeningAudio()") : application.index(
                 "void Application::ConfigureWakeWordForListening()"

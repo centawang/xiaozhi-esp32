@@ -117,6 +117,8 @@ public:
 #if CONFIG_STROKE_ORDER_LOCAL
     /** Bounded cross-task requests. The corresponding mutations run on main. */
     void RequestStartStrokeRound(uint64_t expected_generation = 0);
+    // 0 cancels current plus any uncommitted start, resolved atomically. Explicit
+    // generations are for correlated callbacks and never cancel a newer round.
     void RequestAbortStrokeRound(uint64_t expected_generation, StrokeAbortReason reason);
     uint64_t CurrentStrokeGeneration() const;
 #endif
@@ -172,6 +174,8 @@ private:
     StrokeRoundCoordinator stroke_round_;
     std::recursive_mutex stroke_listening_start_mutex_;
     std::mutex stroke_command_mutex_;
+    // Protected by stroke_command_mutex_; never hold it across external calls.
+    uint64_t stroke_start_sequence_ = 0;
     bool stroke_start_pending_ = false;
     uint64_t stroke_start_expected_generation_ = 0;
     bool stroke_abort_pending_ = false;
@@ -212,7 +216,8 @@ private:
     void BindStrokeOpenAttempt(uint64_t generation, uint64_t open_attempt_id);
     uint64_t MatchStrokeOpenAttempt(uint64_t open_attempt_id);
     void ClearStrokeOpenAttempt(uint64_t generation);
-    void BeginStrokeRoundFromMain(uint64_t expected_generation);
+    void InvalidateStrokeStartLocked(uint64_t expected_generation);
+    void BeginStrokeRoundFromMain(uint64_t expected_generation, uint64_t sequence);
     void BeginLocalStrokeCandidatesFromMain(uint64_t generation);
     void AbortStrokeRound(uint64_t expected_generation, StrokeAbortReason reason);
     void FinishStrokeListening(uint64_t expected_generation);
