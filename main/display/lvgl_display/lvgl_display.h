@@ -25,13 +25,14 @@ public:
     virtual void SetTheme(Theme* theme) override;
     virtual void ShowNotification(const char* notification, int duration_ms = 3000);
     virtual void ShowNotification(const std::string& notification, int duration_ms = 3000);
-    virtual void SetPreviewImage(std::unique_ptr<LvglImage> image);
+    virtual void SetPreviewImage(std::unique_ptr<LvglImage> image) override;
     virtual void UpdateStatusBar(bool update_all = false);
     virtual void SetPowerSaveMode(bool on);
-    virtual bool SnapshotToJpeg(std::string& jpeg_data, int quality = 80);
+    virtual bool SnapshotToJpeg(std::string& jpeg_data, int quality = 80) override;
     virtual bool AddTextGlyphs(const std::vector<TextGlyph>& glyphs, uint8_t bpp) override;
     virtual void ClearTextGlyphs() override;
-    bool SetTextFont(std::shared_ptr<LvglFont> text_font);
+    virtual bool SetTextFont(std::shared_ptr<LvglFont> text_font) override;
+    virtual bool SupportsGuiOperations() const override { return true; }
 
 protected:
     // Called with the display lock held by SetStatus/SetTheme/SetTextFont. Overrides may
@@ -56,6 +57,7 @@ protected:
 
     std::chrono::system_clock::time_point last_status_update_time_;
     esp_timer_handle_t notification_timer_ = nullptr;
+    int last_displayed_clock_min_ = -1;   // -1 forces update on first idle tick
     std::unique_ptr<DynamicGlyphCache> dynamic_glyph_cache_;
 
     friend class DisplayLockGuard;

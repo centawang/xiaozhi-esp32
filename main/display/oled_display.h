@@ -38,6 +38,8 @@ public:
     virtual void SetupUI() override;
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void SetEmotion(const char* emotion) override;
+    virtual bool IsMonochrome() const override { return true; }
+    void SetPowerSaveMode(bool on) override;
 };
 
 #endif  // OLED_DISPLAY_H

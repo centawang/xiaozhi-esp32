@@ -90,6 +90,7 @@ void Display::SetChatMessage(const char*, const char*) {}
 void Display::ClearChatMessages() {}
 void Display::UpdateStatusBar(bool) {}
 void Display::SetPowerSaveMode(bool) {}
+void Display::SetPreviewImage(std::unique_ptr<LvglImage>) {}
 
 LvglDisplay::LvglDisplay() { display_ = lv_display_create(320, 240); }
 LvglDisplay::~LvglDisplay() { lv_display_delete(display_); }
@@ -114,6 +115,7 @@ void LcdDisplay::Unlock() { UnlockUi(); }
 void LcdDisplay::SetEmotion(const char*) {}
 void LcdDisplay::ClearChatMessages() {}
 void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage>) {}
+void LcdDisplay::SetHideSubtitle(bool) {}
 void LcdDisplay::SetupUI() {
     DisplayLockGuard lock(this);
     if (setup_ui_called_) {
@@ -157,6 +159,7 @@ void OledDisplay::Unlock() { UnlockUi(); }
 void OledDisplay::SetupUI() {}
 void OledDisplay::SetChatMessage(const char*, const char*) {}
 void OledDisplay::SetEmotion(const char*) {}
+void OledDisplay::SetPowerSaveMode(bool) {}
 
 // No changes to the extracted production method bodies. Interpose only the LVGL
 // label write to force contention in the middle of the REAL SetStatus transaction.

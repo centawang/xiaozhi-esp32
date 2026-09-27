@@ -155,7 +155,63 @@ def copy_directory(src, dst):
         return False
 
 
-def process_sr_models(wakenet_model_dirs, multinet_model_dirs, build_dir, assets_dir):
+# WakeNet10 ships chip-specific slices. ESP-SR's runtime looks for wn10_data /
+# _MODEL_INFO_, so the unused p1/p2 siblings must be dropped and the selected
+# slice renamed before srmodels.bin is packed.
+WN10_PIE_VERSIONS = {
+    "esp32s3": "p1",
+    "esp32p4": "p2",
+    "esp32s31": "p2",
+}
+
+
+def copy_wakenet_model(src, dst, idf_target=None):
+    """Copy one wakenet model, applying WakeNet10 chip-specific file mapping."""
+    if not os.path.exists(src):
+        print(f"Warning: Source directory does not exist: {src}")
+        return False
+
+    model_name = os.path.basename(src)
+    if not model_name.startswith("wn10_"):
+        return copy_directory(src, dst)
+
+    pie = WN10_PIE_VERSIONS.get(idf_target)
+    if pie is None:
+        raise ValueError(
+            f"WakeNet10 model {model_name} requires an IDF target of "
+            f"{', '.join(sorted(WN10_PIE_VERSIONS))}, got {idf_target!r}"
+        )
+
+    os.makedirs(dst, exist_ok=True)
+    rename = {
+        f"wn10_data_{pie}": "wn10_data",
+        f"_MODEL_INFO_{pie}": "_MODEL_INFO_",
+    }
+    copied = False
+    for file_name in os.listdir(src):
+        source = os.path.join(src, file_name)
+        if file_name in rename:
+            destination = os.path.join(dst, rename[file_name])
+        elif file_name.endswith("_p1") or file_name.endswith("_p2"):
+            continue
+        else:
+            destination = os.path.join(dst, file_name)
+        if os.path.isdir(source):
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+        copied = True
+
+    if not copied or not os.path.exists(os.path.join(dst, "wn10_data")):
+        raise FileNotFoundError(
+            f"WakeNet10 model {model_name} has no {pie} slice for {idf_target}"
+        )
+    print(f"Copied WakeNet10 {model_name} ({pie}) -> {dst}")
+    return True
+
+
+def process_sr_models(wakenet_model_dirs, multinet_model_dirs, build_dir, assets_dir,
+                      idf_target=None):
     """Process SR models (wakenet and multinet) and generate srmodels.bin"""
     if not wakenet_model_dirs and not multinet_model_dirs:
         return None
@@ -173,7 +229,7 @@ def process_sr_models(wakenet_model_dirs, multinet_model_dirs, build_dir, assets
         for wakenet_model_dir in wakenet_model_dirs:
             wakenet_name = os.path.basename(wakenet_model_dir)
             wakenet_dst = os.path.join(sr_models_build_dir, wakenet_name)
-            if copy_directory(wakenet_model_dir, wakenet_dst):
+            if copy_wakenet_model(wakenet_model_dir, wakenet_dst, idf_target):
                 models_processed += 1
                 print(f"Added wakenet model: {wakenet_name}")
     
@@ -462,6 +518,18 @@ def pack_assets_simple(target_path, include_path, out_file, assets_path, max_nam
 # =============================================================================
 # Configuration and main functions
 # =============================================================================
+
+def read_idf_target_from_sdkconfig(sdkconfig_path):
+    """Read CONFIG_IDF_TARGET from sdkconfig."""
+    if not os.path.exists(sdkconfig_path):
+        return None
+    with io.open(sdkconfig_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("CONFIG_IDF_TARGET="):
+                return line.split("=", 1)[1].strip().strip('"')
+    return None
+
 
 def read_wakenet_from_sdkconfig(sdkconfig_path):
     """
@@ -755,7 +823,8 @@ def get_emoji_collection_path(default_emoji_collection, noto_fonts_path, project
 def build_assets_integrated(wakenet_model_paths, multinet_model_paths, text_font_path,
                             emoji_collection_path, extra_files_path, output_path,
                             multinet_model_info=None, font_bundle_id=None,
-                            max_output_bytes=None, min_free_bytes=0):
+                            max_output_bytes=None, min_free_bytes=0, max_size=None,
+                            idf_target=None):
     """
     Build assets using integrated functions (no external dependencies)
     """
@@ -773,7 +842,10 @@ def build_assets_integrated(wakenet_model_paths, multinet_model_paths, text_font
         print("Starting to build assets...")
         
         # Process each component
-        srmodels = process_sr_models(wakenet_model_paths, multinet_model_paths, temp_build_dir, assets_dir) if (wakenet_model_paths or multinet_model_paths) else None
+        srmodels = process_sr_models(
+            wakenet_model_paths, multinet_model_paths, temp_build_dir, assets_dir,
+            idf_target=idf_target,
+        ) if (wakenet_model_paths or multinet_model_paths) else None
         text_font = process_text_font(text_font_path, assets_dir) if text_font_path else None
         emoji_collection = process_emoji_collection(emoji_collection_path, assets_dir) if emoji_collection_path else None
         extra_files = process_extra_files(extra_files_path, assets_dir) if extra_files_path else None
@@ -797,6 +869,11 @@ def build_assets_integrated(wakenet_model_paths, multinet_model_paths, text_font
         # Publish the final assets.bin atomically and enforce partition headroom.
         if os.path.exists(image_file):
             total_size = os.path.getsize(image_file)
+            if max_size is not None and total_size > max_size:
+                raise ValueError(
+                    f"assets.bin size {total_size} bytes exceeds partition limit "
+                    f"{max_size} bytes ({max_size / 1024:.2f}K)"
+                )
             if max_output_bytes is not None:
                 remaining = max_output_bytes - total_size
                 if total_size >= max_output_bytes:
@@ -845,6 +922,8 @@ def main():
                         help='Fail unless assets.bin is strictly smaller than this size')
     parser.add_argument('--min_free_bytes', type=lambda value: int(value, 0), default=0,
                         help='Required remaining bytes below max_output_bytes')
+    parser.add_argument('--max_size', type=lambda value: int(value, 0), default=None,
+                        help='Fail if assets.bin exceeds this many bytes (decimal or 0x hex)')
     
     args = parser.parse_args()
     
@@ -866,6 +945,10 @@ def main():
     print(f"  emoji_collection: {args.emoji_collection}")
     print(f"  output: {args.output}")
     
+    idf_target = read_idf_target_from_sdkconfig(args.sdkconfig)
+    if idf_target:
+        print(f"  idf target: {idf_target}")
+
     # Read wake word type configuration from sdkconfig
     wake_word_config = read_wake_word_type_from_sdkconfig(args.sdkconfig)
     
@@ -959,7 +1042,8 @@ def main():
     success = build_assets_integrated(
         wakenet_model_paths, multinet_model_paths, text_font_path, emoji_collection_path,
         extra_files_path, args.output, multinet_model_info, font_bundle_id,
-        args.max_output_bytes, args.min_free_bytes)
+        max_output_bytes=args.max_output_bytes, min_free_bytes=args.min_free_bytes,
+        max_size=args.max_size, idf_target=idf_target)
     
     if not success:
         sys.exit(1)

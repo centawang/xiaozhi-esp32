@@ -7,16 +7,19 @@
 #include <freertos/task.h>
 
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "audio_service.h"
 #include "device_state.h"
 #include "device_state_machine.h"
+#include "notify/notify_player.h"
 #include "ota.h"
 #include "protocol.h"
 #if CONFIG_STROKE_ORDER_LOCAL
@@ -153,6 +156,8 @@ private:
     AecMode aec_mode_ = kAecOff;
     std::string last_error_message_;
     AudioService audio_service_;
+    NotifyPlayer notify_player_;
+    uint32_t notification_playback_id_ = 0;
     std::unique_ptr<Ota> ota_;
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
@@ -220,6 +225,9 @@ private:
     void DrainStreamingAudio();
 #endif
     void ConfigureWakeWordForListening();
+    void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
+    void StopNotification();
+    void HandleNotificationFinished(uint32_t playback_id, bool success);
 
     // Activation task (runs in background)
     void ActivationTask();

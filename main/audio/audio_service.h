@@ -23,6 +23,7 @@
 #include "audio_debugger.h"
 #include "audio_engine.h"
 #include "audio_stream_generation.h"
+#include "fixed_queue.h"
 #include "ogg_demuxer.h"
 #include "protocol.h"
 
@@ -41,7 +42,7 @@
 #define OPUS_FRAME_DURATION_MS 60
 #define MAX_ENCODE_TASKS_IN_QUEUE 2
 #define MAX_PLAYBACK_TASKS_IN_QUEUE 2
-#define MAX_DECODE_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
+#define MAX_DECODE_PACKETS_IN_QUEUE (1200 / OPUS_FRAME_DURATION_MS)
 #define MAX_SEND_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
 #define AUDIO_TESTING_MAX_DURATION_MS 10000
 #define MAX_TIMESTAMPS_IN_QUEUE 3
@@ -87,6 +88,7 @@ struct AudioServiceCallbacks {
     std::function<void(void)> on_audio_testing_queue_full;
     // Fired when the decode/playback queues and their in-flight work are drained.
     std::function<void(void)> on_playback_drained;
+    std::function<void(uint32_t playback_id, uint32_t media_position_ms)> on_playback_progress;
 };
 
 enum AudioTaskType {
@@ -101,6 +103,8 @@ struct AudioTask {
     uint32_t timestamp = 0;
     uint32_t capture_generation = 0;
     uint32_t playback_generation = 0;
+    uint32_t playback_id = 0;
+    uint32_t media_position_ms = 0;
 };
 
 struct DebugStatistics {
@@ -132,6 +136,7 @@ public:
     bool IsAfeWakeWord();
 
     void EnableWakeWordDetection(bool enable);
+    void ReleaseWakeWordResources();
     bool EnableVoiceProcessing(bool enable);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
@@ -179,17 +184,22 @@ private:
     TaskHandle_t opus_codec_task_handle_ = nullptr;
     std::mutex audio_queue_mutex_;
     std::condition_variable audio_queue_cv_;
-    std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
-    std::deque<std::unique_ptr<AudioStreamPacket>> audio_send_queue_;
-    std::deque<std::unique_ptr<AudioStreamPacket>> audio_testing_queue_;
-    std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
-    std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
+    // Testing records up to AUDIO_TESTING_MAX_DURATION_MS, then swaps into the
+    // decode queue. Both queues must share this capacity so swap() is valid.
+    static constexpr size_t kAudioTestingPacketCapacity =
+        AUDIO_TESTING_MAX_DURATION_MS / OPUS_FRAME_DURATION_MS;
+    FixedQueue<std::unique_ptr<AudioStreamPacket>, kAudioTestingPacketCapacity> audio_decode_queue_;
+    FixedQueue<std::unique_ptr<AudioStreamPacket>, MAX_SEND_PACKETS_IN_QUEUE> audio_send_queue_;
+    FixedQueue<std::unique_ptr<AudioStreamPacket>, kAudioTestingPacketCapacity>
+        audio_testing_queue_;
+    FixedQueue<AudioTask, MAX_ENCODE_TASKS_IN_QUEUE> audio_encode_queue_;
+    FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;
     bool decode_in_flight_ = false;
     bool output_in_flight_ = false;
     bool playback_drained_notified_ = true;
     AudioStreamGenerationGate stream_generation_;
     // For server AEC
-    std::deque<uint32_t> timestamp_queue_;
+    FixedQueue<uint32_t, MAX_TIMESTAMPS_IN_QUEUE> timestamp_queue_;
 
     bool audio_engine_initialized_ = false;
     bool voice_detected_ = false;

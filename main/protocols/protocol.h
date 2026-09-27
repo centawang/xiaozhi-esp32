@@ -11,6 +11,8 @@ struct AudioStreamPacket {
     int sample_rate = 0;
     int frame_duration = 0;
     uint32_t timestamp = 0;
+    uint32_t playback_id = 0;
+    uint32_t media_position_ms = 0;
     std::vector<uint8_t> payload;
     // Immutable identity of the transport channel that delivered this packet.
     // Local sounds and device-originated packets leave this empty.
@@ -102,6 +104,7 @@ protected:
 
     virtual bool SendText(const std::string& text) = 0;
     virtual void SetError(const std::string& message);
+    void SetError(const std::string& message, const std::string& detail);
     virtual bool IsTimeout() const;
     static void AddTextFontCapabilities(cJSON* root);
 };

@@ -41,6 +41,7 @@ class ChatStatusLockingTest(unittest.TestCase):
             "esp_log.h": '#include <cstdio>\n#define ESP_LOGW(...) ((void)0)\n'
                          '#define ESP_LOGE(...) std::fputs("Failed to lock display\\n", stderr)\n',
             "esp_pm.h": "using esp_pm_lock_handle_t = void*;\n",
+            "esp_system.h": '#include <cstdlib>\n[[noreturn]] inline void esp_system_abort(const char*) { std::abort(); }\n',
             "esp_timer.h": "using esp_timer_handle_t = void*;\n",
             "esp_lcd_panel_io.h": "using esp_lcd_panel_io_handle_t = void*;\n",
             "esp_lcd_panel_ops.h": "using esp_lcd_panel_handle_t = void*;\n",

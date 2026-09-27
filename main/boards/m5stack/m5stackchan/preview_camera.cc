@@ -7,7 +7,7 @@
 #include <algorithm>
 
 #include "board.h"
-#include "lvgl_display.h"
+#include "display.h"
 #include "mcp_server.h"
 
 #define TAG "PreviewCamera"
@@ -90,10 +90,8 @@ void PreviewCamera::PreviewLoop() {
     preview_running_ = false;
 
     // Drop the last frame now instead of waiting out the display's preview timer.
-    auto display = dynamic_cast<LvglDisplay*>(Board::GetInstance().GetDisplay());
-    if (display != nullptr) {
-        display->SetPreviewImage(nullptr);
-    }
+    // Display provides a no-op default for boards/styles without preview support.
+    Board::GetInstance().GetDisplay()->SetPreviewImage(nullptr);
 
     ESP_LOGI(TAG, "Viewfinder stopped");
     xSemaphoreGive(preview_exited_);
