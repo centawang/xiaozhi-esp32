@@ -232,6 +232,11 @@ void StrokeOrderView::OnDeviceStateChanged(DeviceState state) {
     }
     const uint64_t generation = coordinator_->CurrentGeneration();
     const bool idle = state == kDeviceStateIdle;
+    if (!idle) {
+        // Also hide when no round is active (e.g. notification takeover), and
+        // before the unexpected-state branch defers an active round's abort.
+        HideEntryLocked();
+    }
     if (generation != 0 &&
         !coordinator_->AllowsDeviceClass(generation, ClassifyDeviceState(state))) {
         lifecycle_.SetDeviceIdle(idle);
@@ -745,9 +750,8 @@ void StrokeOrderView::PrepareTimerCb(lv_timer_t* timer) {
                                        kDeviceStateIdle);
         self->lifecycle_.RebuildSurface();
         self->ReevaluateEntryLocked();
-        ESP_LOGI(TAG, "bundle stage=publish ok=%d reason=%s ready=%d entry_eligible=%d",
-                 bound, reason, self->controller_->is_ready(),
-                 self->lifecycle_.CanShowEntry());
+        ESP_LOGI(TAG, "bundle stage=publish ok=%d reason=%s ready=%d entry_eligible=%d", bound,
+                 reason, self->controller_->is_ready(), self->lifecycle_.CanShowEntry());
         return;
     }
     if (!self->session_.IsCurrentGeneration(r.round) || self->presented_generation_ != r.round ||

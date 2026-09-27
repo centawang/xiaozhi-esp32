@@ -184,7 +184,67 @@ def _compile_session_harness(output: Path):
     _compile_with_fallback(common)
 
 
+def _compile_notify_stroke_harness(directory: Path):
+    # Compile complete production methods verbatim, as in the LVGL harness.
+    # No source-string assertions or rewritten ordering model: removing the
+    # notification preflight or the non-Idle hide must fail at runtime.
+    def method(source, signature):
+        start = source.index(signature)
+        end = source.index("{", start) + 1
+        depth = 1
+        while depth:
+            depth += (source[end] == "{") - (source[end] == "}")
+            end += 1
+        return source[start:end] + "\n"
+
+    bodies = []
+    for path, signatures in (
+        ("main/application.cc", (
+            "bool Application::SetDeviceState",
+            "void Application::DrainStreamingAudio",
+            "void Application::AbortStrokeRound",
+            "void Application::RequestAbortStrokeRound",
+            "void Application::HandleStrokeAbortEvent",
+            "void Application::StartNotification",
+            "void Application::StopNotification",
+            "void Application::HandleNotificationFinished")),
+        ("main/stroke_order/stroke_order_view.cc", (
+            "uint8_t StrokeOrderView::ClassifyDeviceState",
+            "void StrokeOrderView::OnDeviceStateChanged",
+            "void StrokeOrderView::HideEntryLocked",
+            "void StrokeOrderView::ReevaluateEntryLocked",
+            "void StrokeOrderView::RequestAbortLocked")),
+    ):
+        source = (ROOT / path).read_text(encoding="utf-8")
+        bodies.extend(method(source, signature) for signature in signatures)
+    (directory / "notify_stroke_production.inc").write_text("\n".join(bodies))
+    executable = directory / "notify_stroke_harness"
+    _compile_with_fallback([
+        _host_compiler(), "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
+        "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
+        "-I", str(directory), "-I", str(ROOT / "main"),
+        str(ROOT / "scripts/tests/notify_stroke_harness.cc"),
+        str(ROOT / "main/stroke_order/stroke_round_coordinator.cc"),
+        "-o", str(executable),
+    ])
+    return executable
+
+
 class StrokeOrderUiTest(unittest.TestCase):
+    def _run_notify_stroke(self, entry=False):
+        with tempfile.TemporaryDirectory(prefix="notify-stroke-") as directory:
+            executable = _compile_notify_stroke_harness(Path(directory))
+            run = subprocess.run([str(executable)] + (["entry"] if entry else []),
+                                 capture_output=True, text=True, timeout=30)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertIn("notify_stroke_" + ("entry" if entry else "order") + ": PASS", run.stdout)
+
+    def test_notify_retires_candidates_playback_before_audio_and_late_abort(self):
+        self._run_notify_stroke()
+
+    def test_non_idle_including_notifying_hides_and_disables_entry(self):
+        self._run_notify_stroke(entry=True)
+
     def test_package_smoke_corpus_is_offline_three_chars_not_release(self):
         source = Path(SCRIPTS / "package_stroke_order_smoke.py").read_text(encoding="utf-8")
         self.assertNotIn("urllib", source)

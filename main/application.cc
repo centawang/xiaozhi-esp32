@@ -1062,10 +1062,9 @@ void Application::InitializeProtocol() {
             if (cJSON_IsObject(payload)) {
                 CJsonStringUniquePtr payload_json(cJSON_PrintUnformatted(payload));
                 if (payload_json) {
-                    Schedule(
-                        [this, display, payload_str = std::string(payload_json.get())]() {
-                            display->SetChatMessage("system", payload_str.c_str());
-                        });
+                    Schedule([this, display, payload_str = std::string(payload_json.get())]() {
+                        display->SetChatMessage("system", payload_str.c_str());
+                    });
                 }
             } else {
                 ESP_LOGW(TAG, "Invalid custom message format: missing payload");
@@ -2088,6 +2087,19 @@ void Application::StartNotification(std::string audio_url, std::vector<NotifySub
         ESP_LOGW(TAG, "Ignoring notify message while device is busy");
         return;
     }
+
+#if CONFIG_STROKE_ORDER_LOCAL
+    // Candidates/local playback also use Idle. Retire their routing and drain
+    // their audio synchronously on the main task, BEFORE notification audio or
+    // PERFORMANCE is published. Deferred aborts for this generation then fail
+    // AbortRound's match check and cannot reset the new playback or its power.
+    const uint64_t stroke_generation = stroke_round_.CurrentGeneration();
+    if (stroke_generation != 0) {
+        AbortStrokeRound(stroke_generation, StrokeAbortReason::UnexpectedState);
+    } else if (StrokeOrderView::GetInstance().IsOverlayActive()) {
+        StrokeOrderView::GetInstance().AbortFromMain(0);
+    }
+#endif
 
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
