@@ -132,7 +132,9 @@ private:
                            lv_color_t color, int width);
     void DrawStartMarker(lv_layer_t* layer, const CachedStroke& stroke, int x, int y, int size,
                          lv_color_t color);
-    void RedrawCanvas();
+    // Page rebuilds and admitted controls force presentation, even at the same
+    // phase. Only ordinary timer holds may reuse the pixels already on canvas.
+    void RedrawCanvas(bool force = true);
     void UpdateControlLabels();
     bool HandleControlLocked(uint32_t index);
     void HandleStatePresentationLocked();
@@ -147,6 +149,24 @@ private:
     uint32_t candidate_select_ids_[StrokeOrderLayout::kMaxCandidates] = {};
     uint32_t control_ids_[StrokeOrderLayout::kControlCount] = {};
     lv_draw_buf_t* canvas_buf_ = nullptr;
+    struct CanvasVisualState {
+        uint16_t current;
+        uint16_t completed;
+        bool gap;
+        StrokeOrderUiState state;
+        uint32_t background;
+        uint32_t foreground;
+        bool operator==(const CanvasVisualState& other) const {
+            return current == other.current && completed == other.completed && gap == other.gap &&
+                   state == other.state && background == other.background &&
+                   foreground == other.foreground;
+        }
+    };
+    CanvasVisualState canvas_visual_{};
+    bool canvas_rendered_ = false;
+    // LVGL copies polyline points at submission. One bounded, display-lock-owned
+    // scratch array avoids per-outline C++ allocations and extra task-stack use.
+    lv_point_precise_t outline_points_[StrokeOrderStore::kMaxOutlinePointsPerStroke];
     lv_timer_t* anim_timer_ = nullptr;
     StrokeOrderAnimationClock anim_clock_;
     std::vector<CachedGlyph> candidate_glyphs_;

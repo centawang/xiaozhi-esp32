@@ -3,6 +3,7 @@
 No audio harness is required: feedback is now entirely LVGL pressed styling.
 """
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -140,6 +141,21 @@ class StrokeInteractionTest(unittest.TestCase):
         )
         self.assertNotIn("theme->user_bubble_color()", draw)
 
+    def test_every_control_callback_is_registered_before_events_and_retired_before_clean(self):
+        view = (ROOT / "main/stroke_order/stroke_order_view.cc").read_text()
+        # Enumerate ALL production registration sites, not just AnimationPage.
+        sites = list(re.finditer(r"lv_obj_add_event_cb\((\w+), ControlClicked,", view))
+        self.assertEqual(len(sites), 6)  # candidate X, animation loop, error R/<, status R/X
+        for site in sites:
+            prefix = view[:site.start()]
+            page_start = prefix.rfind("bool StrokeOrderView::Render")
+            page = prefix[page_start:]
+            target = site.group(1)
+            slot = re.findall(rf"lv_obj_set_user_data\({target}, &control_ids_\[(\w+)\]\)", page)[-1]
+            self.assertIn(f"control_buttons_[{slot}] = {target};", page)
+            self.assertLess(page.index("control_buttons_[i] = nullptr"),
+                            page.index("lv_obj_clean(overlay_)"))
+
     def test_lvgl_admits_before_disarm_render_or_abort(self):
         view = (ROOT / "main/stroke_order/stroke_order_view.cc").read_text()
         candidate = view[view.index("void StrokeOrderView::CandidateClicked"):
@@ -156,8 +172,11 @@ class StrokeInteractionTest(unittest.TestCase):
         self.assertLess(candidate.index("DisarmClick"), candidate.index("HandleStatePresentationLocked"))
         self.assertNotIn("RequestAbort", candidate)
         self.assertLess(handler.index("StrokeOrderApplyUiAction"), handler.index("RequestAbortStrokeRound"))
-        self.assertIn("if (self->HandleControlLocked(index) && index == 4)", control)
-        self.assertLess(control.index("HandleControlLocked"), control.index("DisarmClick"))
+        self.assertIn("target != self->control_buttons_[index]", control)
+        self.assertIn("self->HandleControlLocked(index)", control)
+        self.assertNotIn("DisarmClick", control)  # target may have been deleted by Back
+        self.assertLess(handler.index("StrokeOrderApplyUiAction"), handler.index("DisarmClick"))
+        self.assertLess(handler.index("DisarmClick"), handler.index("HandleStatePresentationLocked"))
         # No release/repeat handler or custom action queue can double-dispatch a touch.
         for name in ("EntryClicked", "CandidateClicked", "ControlClicked"):
             registrations = [line for line in view.splitlines() if "lv_obj_add_event_cb" in line
@@ -181,10 +200,12 @@ class StrokeInteractionTest(unittest.TestCase):
         self.assertEqual(sync.count("StrokeOrderController::kTimerPeriodMs"), 2)
         self.assertNotIn("kMaxAnimationAdvanceMs", sync)
         self.assertNotIn("anim_clock_.Reset", sync)
-        # Every admitted timer boundary synchronously redraws before returning
-        # to LVGL. Candidate/replay/control paths also draw before a later tick.
+        # Visible boundaries/first arm synchronously redraw after admission;
+        # only unchanged holds may reuse pixels (real LVGL behavior/count tests
+        # live in test_stroke_order_render.py).
         self.assertEqual(timer.count("StrokeOrderApplyAnimationTick"), 1)
-        self.assertLess(timer.index("StrokeOrderApplyAnimationTick"), timer.index("RedrawCanvas()"))
+        self.assertLess(timer.index("StrokeOrderApplyAnimationTick"), timer.index("RedrawCanvas(first_frame)"))
+        self.assertLess(timer.index("first_frame_pending()"), timer.index("StrokeOrderApplyAnimationTick"))
         self.assertLess(handler.index("StrokeOrderApplyUiAction"), handler.index("RedrawCanvas()"))
         page = view[view.index("bool StrokeOrderView::RenderAnimationPage"):
                     view.index("bool StrokeOrderView::RenderErrorPage")]
